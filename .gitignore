@@ -37,3 +37,11 @@ env/
 # ROS 2 specific
 *.db
 *.db-journal
+
+# Other packages in workspace (not part of this project)
+src/cpp_pubsub/
+src/cpp_srvcli/
+src/py_pubsub/
+src/py_srvcli/
+src/examples/
+src/ros_tutorials/
