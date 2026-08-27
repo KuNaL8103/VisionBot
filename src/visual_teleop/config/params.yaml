@@ -1,0 +1,49 @@
+# Visual Teleoperation Parameters
+# All parameters loaded via declare_parameter in nodes
+
+# --- Perception Node Parameters ---
+perception_node:
+  ros__parameters:
+    # Camera settings
+    camera_index: 0                    # Video device index (/dev/videoX)
+    camera_width: 640                  # Capture width
+    camera_height: 480                 # Capture height
+    camera_fps: 30                     # Capture FPS
+
+    # YOLO settings
+    yolo_model: "yolov8n.pt"           # YOLO model file (downloaded auto)
+    target_class: "person"             # COCO class name to track
+    confidence_threshold: 0.5          # Detection confidence threshold
+    iou_threshold: 0.45                # NMS IoU threshold
+    device: "cpu"                      # Inference device: "cpu" or "cuda"
+
+    # ByteTrack settings
+    tracking_max_age: 30               # Max frames to keep lost track
+    tracking_min_hits: 3               # Min hits to confirm track
+    tracking_iou_threshold: 0.3        # IoU threshold for track association
+
+    # Output
+    publish_annotated_image: true      # Publish /perception/annotated image
+    publish_rate: 30.0                 # Hz
+
+# --- Controller Node Parameters ---
+controller_node:
+  ros__parameters:
+    # Control gains
+    linear_gain: 0.5                   # Proportional gain for linear velocity
+    angular_gain: 1.0                  # Proportional gain for angular velocity
+
+    # Speed limits (TurtleBot3 Waffle max: 0.26 m/s linear, 1.82 rad/s angular)
+    max_linear_speed: 0.22             # m/s
+    max_angular_speed: 1.82            # rad/s
+
+    # Target following behavior
+    target_distance: 1.0               # Desired distance from target (meters)
+    deadband: 0.1                      # Distance deadband (meters)
+
+    # Safety
+    lost_target_timeout: 1.0           # Seconds before stopping if target lost
+    enable_safety_stop: true           # Stop robot if no target detected
+
+    # Output
+    publish_rate: 30.0                 # Hz
