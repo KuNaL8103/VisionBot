@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Perception Node - Dummy Detector
+Perception Node - YOLO Detection
 
-Opens webcam using OpenCV VideoCapture, reads frames at configured rate,
-publishes a fixed-center TrackedTarget message on /target/pose.
-This is a placeholder - no ML detection yet.
+Opens webcam using OpenCV VideoCapture, runs YOLOv8 detection on each frame,
+publishes TrackedTarget with normalized bbox center of highest-confidence
+detection for the configured target_class.
 """
 
 import rclpy
 from rclpy.node import Node
 from visual_teleop_msgs.msg import TrackedTarget
 import cv2
+from ultralytics import YOLO
 
 
 class PerceptionNode(Node):
-    """Node for publishing dummy target at frame center."""
+    """Node for publishing YOLO-detected target position."""
 
     def __init__(self):
         super().__init__('perception_node')
@@ -24,18 +25,55 @@ class PerceptionNode(Node):
         self.declare_parameter('camera_width', 640)
         self.declare_parameter('camera_height', 480)
         self.declare_parameter('publish_rate_hz', 30.0)
+        self.declare_parameter('yolo_model', 'yolov8n.pt')
+        self.declare_parameter('target_class', 'person')
+        self.declare_parameter('confidence_threshold', 0.5)
+        self.declare_parameter('iou_threshold', 0.45)
+        self.declare_parameter('device', 'cpu')
+        self.declare_parameter('show_debug_window', False)
 
         # Get parameter values
         self.camera_index = self.get_parameter('camera_index').get_parameter_value().integer_value
         self.camera_width = self.get_parameter('camera_width').get_parameter_value().integer_value
         self.camera_height = self.get_parameter('camera_height').get_parameter_value().integer_value
         self.publish_rate_hz = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
+        self.yolo_model_path = self.get_parameter('yolo_model').get_parameter_value().string_value
+        self.target_class = self.get_parameter('target_class').get_parameter_value().string_value
+        self.confidence_threshold = self.get_parameter('confidence_threshold').get_parameter_value().double_value
+        self.iou_threshold = self.get_parameter('iou_threshold').get_parameter_value().double_value
+        self.device = self.get_parameter('device').get_parameter_value().string_value
+        self.show_debug_window = self.get_parameter('show_debug_window').get_parameter_value().bool_value
 
         self.get_logger().info(f'Perception node initialized')
         self.get_logger().info(f'  camera_index: {self.camera_index}')
         self.get_logger().info(f'  camera_width: {self.camera_width}')
         self.get_logger().info(f'  camera_height: {self.camera_height}')
         self.get_logger().info(f'  publish_rate_hz: {self.publish_rate_hz}')
+        self.get_logger().info(f'  yolo_model: {self.yolo_model_path}')
+        self.get_logger().info(f'  target_class: {self.target_class}')
+        self.get_logger().info(f'  confidence_threshold: {self.confidence_threshold}')
+        self.get_logger().info(f'  iou_threshold: {self.iou_threshold}')
+        self.get_logger().info(f'  device: {self.device}')
+        self.get_logger().info(f'  show_debug_window: {self.show_debug_window}')
+
+        # Load YOLO model
+        self.get_logger().info(f'Loading YOLO model: {self.yolo_model_path}')
+        self.model = YOLO(self.yolo_model_path)
+        self.model.to(self.device)
+        # Get class names from model
+        self.class_names = self.model.names
+        self.get_logger().info(f'YOLO model loaded. Classes: {self.class_names}')
+
+        # Find target class index
+        self.target_class_idx = None
+        for idx, name in self.class_names.items():
+            if name == self.target_class:
+                self.target_class_idx = idx
+                break
+        if self.target_class_idx is None:
+            self.get_logger().warn(f'Target class "{self.target_class}" not found in model classes: {list(self.class_names.values())}')
+        else:
+            self.get_logger().info(f'Target class "{self.target_class}" has index {self.target_class_idx}')
 
         # Open webcam
         self.cap = cv2.VideoCapture(self.camera_index)
@@ -52,29 +90,123 @@ class PerceptionNode(Node):
         # Publisher for target info
         self.target_pub = self.create_publisher(TrackedTarget, '/target/pose', 10)
 
+        # State for holding last known position when target lost
+        self.last_x = 0.5
+        self.last_y = 0.5
+
         # Timer for processing loop
         self.timer = self.create_timer(1.0 / self.publish_rate_hz, self.timer_callback)
 
     def timer_callback(self):
-        """Timer callback: read frame and publish dummy TrackedTarget."""
-        # Read frame (we don't use it for detection yet, but we read to keep camera active)
+        """Timer callback: read frame, run YOLO detection, publish TrackedTarget."""
+        # Read frame
         ret, frame = self.cap.read()
         if not ret:
             self.get_logger().warn('Failed to read frame from camera', throttle_duration_sec=5.0)
+            self._publish_target_visible_false()
+            return
 
-        # Create and publish dummy TrackedTarget message
-        # Fixed center: x=0.5, y=0.5 (normalized), confidence=1.0, visible=true, track_id=0
+        frame_height, frame_width = frame.shape[:2]
+
+        # Run YOLO inference
+        results = self.model(frame, verbose=False, conf=self.confidence_threshold, iou=self.iou_threshold, device=self.device)
+
+        # Process detections
+        best_detection = None
+        best_confidence = 0.0
+
+        for result in results:
+            boxes = result.boxes
+            if boxes is None:
+                continue
+            for box in boxes:
+                cls_idx = int(box.cls.item())
+                conf = float(box.conf.item())
+                # Filter by target class
+                if self.target_class_idx is not None and cls_idx != self.target_class_idx:
+                    continue
+                if conf > best_confidence:
+                    best_confidence = conf
+                    best_detection = box
+
+        # Prepare and publish message
         msg = TrackedTarget()
-        msg.x = 0.5
-        msg.y = 0.5
-        msg.confidence = 1.0
-        msg.target_visible = True
+        if best_detection is not None:
+            # Get bbox coordinates (xyxy format: x1, y1, x2, y2)
+            x1, y1, x2, y2 = best_detection.xyxy[0].tolist()
+            # Compute center in normalized coordinates (0.0-1.0, origin top-left)
+            center_x = (x1 + x2) / 2.0 / frame_width
+            center_y = (y1 + y2) / 2.0 / frame_height
+
+            msg.x = float(center_x)
+            msg.y = float(center_y)
+            msg.confidence = best_confidence
+            msg.target_visible = True
+            msg.track_id = 0  # No ByteTrack yet
+
+            # Update last known position
+            self.last_x = msg.x
+            self.last_y = msg.y
+
+            # Debug window
+            if self.show_debug_window:
+                self._draw_debug_frame(frame, x1, y1, x2, y2, best_confidence, self.target_class)
+        else:
+            self._publish_target_visible_false(frame)
+
+        self.target_pub.publish(msg)
+
+    def _publish_target_visible_false(self, frame=None):
+        """Publish TrackedTarget with target_visible=false, holding last known position."""
+        msg = TrackedTarget()
+        msg.x = self.last_x
+        msg.y = self.last_y
+        msg.confidence = 0.0
+        msg.target_visible = False
         msg.track_id = 0
         self.target_pub.publish(msg)
+
+        if self.show_debug_window and frame is not None:
+            self._draw_debug_frame(frame, 0, 0, 0, 0, 0.0, self.target_class, no_detection=True)
+
+    def _draw_debug_frame(self, frame, x1, y1, x2, y2, conf, class_name, no_detection=False):
+        """Draw bounding box and info on frame for debug visualization."""
+        debug_frame = frame.copy()
+        if not no_detection and x2 > x1 and y2 > y1:
+            # Draw bounding box
+            cv2.rectangle(debug_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+            # Draw label
+            label = f'{class_name}: {conf:.2f}'
+            cv2.putText(debug_frame, label, (int(x1), int(y1) - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            # Draw center point
+            center_x = int((x1 + x2) / 2)
+            center_y = int((y1 + y2) / 2)
+            cv2.circle(debug_frame, (center_x, center_y), 5, (0, 0, 255), -1)
+        else:
+            # No detection - draw "NO DETECTION" text
+            cv2.putText(debug_frame, 'NO DETECTION', (50, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+            # Draw last known position
+            center_x = int(self.last_x * frame.shape[1])
+            center_y = int(self.last_y * frame.shape[0])
+            cv2.circle(debug_frame, (center_x, center_y), 5, (255, 0, 0), -1)
+            cv2.putText(debug_frame, 'LAST KNOWN', (center_x + 10, center_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
+        # Draw image center crosshair
+        h, w = debug_frame.shape[:2]
+        cv2.line(debug_frame, (w//2 - 20, h//2), (w//2 + 20, h//2), (255, 255, 255), 1)
+        cv2.line(debug_frame, (w//2, h//2 - 20), (w//2, h//2 + 20), (255, 255, 255), 1)
+
+        cv2.imshow('YOLO Detection Debug', debug_frame)
+        cv2.waitKey(1)
 
     def destroy_node(self):
         if hasattr(self, 'cap') and self.cap.isOpened():
             self.cap.release()
+        if self.show_debug_window:
+            cv2.destroyAllWindows()
         super().destroy_node()
 
 
