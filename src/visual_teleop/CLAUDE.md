@@ -27,7 +27,10 @@ contracts. Do not change topic names/types without updating both.
 - Commit messages: conventional commits (feat:, fix:, docs:, test:).
 
 ## Current status
-Workspace just scaffolded. No nodes implemented yet.
+- **visual_teleop_msgs/TrackedTarget**: exists, builds, and is visible via `ros2 interface show`
+- **perception_node**: opens real webcam via cv2.VideoCapture, publishes dummy fixed-center TrackedTarget (x=0.5, y=0.5, confidence=1.0, target_visible=true, track_id=0) at ~30 Hz. YOLO/ByteTrack NOT yet integrated.
+- **controller_node**: boilerplate only — declares parameters and subscribes to /target/pose, but does not yet compute or publish /cmd_vel.
+- **Tests**: perception_node has 5 passing unit tests (parameter loading, publish logic with mocked camera); controller_node has 1 placeholder test.
 
 ## Known constraints
 - Target tracking latency budget: aim for <150ms camera-to-cmd_vel for the
