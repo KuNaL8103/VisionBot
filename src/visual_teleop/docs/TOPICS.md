@@ -4,36 +4,8 @@
 
 | Topic | Type | Publisher | Subscriber | Rate |
 |-------|------|-----------|------------|------|
-| `/camera/image_raw` | sensor_msgs/Image | camera driver | perception_node | 30 Hz |
-| `/target/pose` | geometry_msgs/PoseStamped | perception_node | controller_node | 30 Hz |
+| `/target/pose` | visual_teleop_msgs/TrackedTarget | perception_node | controller_node | 30 Hz |
 | `/cmd_vel` | geometry_msgs/Twist | controller_node | TurtleBot3 (Gazebo) | 30 Hz |
-| `/perception/annotated` | sensor_msgs/Image | perception_node | (visualization) | 30 Hz |
-
----
-
-## `/camera/image_raw`
-
-**Publisher**: Camera driver (v4l2_camera or similar)
-**Subscriber**: perception_node
-**QoS**: Sensor Data (best effort, keep last 1)
-
-```python
-# sensor_msgs.msg.Image
-header:
-  stamp: builtin_interfaces.msg.Time    # Acquisition timestamp
-  frame_id: "camera_frame"              # Optical frame
-height: 480
-width: 640
-encoding: "bgr8"                        # OpenCV default
-is_bigendian: 0
-step: 1920                              # width * 3 (BGR)
-data: uint8[]                           # Raw pixel data
-```
-
-**Notes**:
-- Frame ID must match camera calibration if used
-- Encoding assumed to be `bgr8` (OpenCV default)
-- If using different encoding, update perception_node accordingly
 
 ---
 
@@ -44,36 +16,23 @@ data: uint8[]                           # Raw pixel data
 **QoS**: Reliable, keep last 10
 
 ```python
-# geometry_msgs.msg.PoseStamped
-header:
-  stamp: builtin_interfaces.msg.Time    # Detection timestamp
-  frame_id: "camera_frame"              # Camera optical frame
-pose:
-  position:
-    x: float64                          # Target X in camera frame (meters)
-    y: float64                          # Target Y in camera frame (meters)
-    z: float64                          # Target Z (estimated depth, meters)
-  orientation:
-    x: 0.0                              # Not used (identity quaternion)
-    y: 0.0
-    z: 0.0
-    w: 1.0
+# visual_teleop_msgs.msg.TrackedTarget
+x: float32                          # Target X in camera frame (normalized -1..1 or pixels)
+y: float32                          # Target Y in camera frame (normalized -1..1 or pixels)
+confidence: float32                 # Detection confidence 0.0..1.0
+target_visible: bool                # True if target currently tracked
+track_id: int32                     # ByteTrack track ID (persistent across frames)
 ```
 
-**Coordinate Frame**: Camera optical frame (Z forward, X right, Y down)
-- Origin at camera optical center
-- X: right (+), Y: down (+), Z: forward (+)
-
-**Depth Estimation**: Simple pinhole model
-```
-z = (focal_length * real_height) / bbox_height
-x = (cx - bbox_center_x) * z / focal_length
-y = (bbox_center_y - cy) * z / focal_length
-```
-Where `focal_length`, `cx`, `cy` from camera intrinsics (or approximated).
+**Coordinate Frame**: Camera image frame (origin top-left, X right, Y down)
+- `x`, `y`: pixel coordinates of tracked target center (0..width, 0..height)
+- OR normalized coordinates (-1..1) if `normalize_coords` param is true
+- `confidence`: YOLO detection confidence for this track
+- `target_visible`: False when target lost (track expired)
+- `track_id`: ByteTrack-assigned persistent track ID
 
 **Special Values**:
-- If no target detected: **do not publish** (controller handles timeout)
+- If no target detected: publish with `target_visible: false`, `track_id: -1`
 - If multiple targets: publish best track (highest confidence)
 
 ---
@@ -104,23 +63,6 @@ angular:
 - Positive `linear.x`: forward
 - Positive `angular.z`: counter-clockwise (left turn)
 - Zero velocities when target lost > `lost_target_timeout`
-
----
-
-## `/perception/annotated` (Optional)
-
-**Publisher**: perception_node (if `publish_annotated_image: true`)
-**Subscriber**: rqt_image_view, web UI, etc.
-**QoS**: Sensor Data (best effort, keep last 1)
-
-```python
-# sensor_msgs.msg.Image (same format as /camera/image_raw)
-# Contains original frame with:
-# - Bounding boxes around detected targets
-# - Track IDs
-# - Confidence scores
-# - Class labels
-```
 
 ---
 

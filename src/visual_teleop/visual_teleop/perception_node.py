@@ -3,13 +3,12 @@
 Perception Node - Boilerplate
 
 Subscribes to camera image topic, runs YOLO + ByteTrack to detect/track target,
-publishes target pose on /target/pose.
+publishes target info on /target/pose using visual_teleop_msgs/TrackedTarget.
 """
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
-from geometry_msgs.msg import PoseStamped
+from visual_teleop_msgs.msg import TrackedTarget
 
 
 class PerceptionNode(Node):
@@ -37,11 +36,10 @@ class PerceptionNode(Node):
         self.get_logger().info(f'  tracking_max_age: {self.tracking_max_age}')
 
         # TODO: Initialize YOLO model, ByteTrack tracker, OpenCV VideoCapture
-        # TODO: Create publisher for /target/pose (PoseStamped)
         # TODO: Create timer callback for processing frames
 
-        # Placeholder: publisher for target pose
-        self.target_pose_pub = self.create_publisher(PoseStamped, '/target/pose', 10)
+        # Publisher for target info
+        self.target_pub = self.create_publisher(TrackedTarget, '/target/pose', 10)
 
         # Placeholder: timer for processing loop
         # self.timer = self.create_timer(1.0/30.0, self.process_frame)
@@ -54,7 +52,11 @@ class PerceptionNode(Node):
         # 3. Update ByteTrack tracker
         # 4. Filter for target class
         # 5. Select best track (e.g., highest confidence, closest to center)
-        # 6. Convert track to PoseStamped (x, y in image coords -> 3D pose estimate)
+        # 6. Create TrackedTarget message:
+        #    - x, y: pixel coordinates of track center
+        #    - confidence: detection confidence
+        #    - target_visible: True if track active
+        #    - track_id: ByteTrack track ID
         # 7. Publish on /target/pose
         pass
 

@@ -2,13 +2,15 @@
 """
 Controller Node - Boilerplate
 
-Subscribes to /target/pose, computes velocity commands using a simple
-proportional controller, publishes /cmd_vel for TurtleBot3.
+Subscribes to /target/pose (visual_teleop_msgs/TrackedTarget), computes
+velocity commands using a simple proportional controller, publishes /cmd_vel
+for TurtleBot3.
 """
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, Twist
+from visual_teleop_msgs.msg import TrackedTarget
+from geometry_msgs.msg import Twist
 
 
 class ControllerNode(Node):
@@ -42,31 +44,31 @@ class ControllerNode(Node):
         self.get_logger().info(f'  deadband: {self.deadband}')
 
         # Subscriber to target pose
-        self.target_pose_sub = self.create_subscription(
-            PoseStamped,
+        self.target_sub = self.create_subscription(
+            TrackedTarget,
             '/target/pose',
-            self.target_pose_callback,
+            self.target_callback,
             10
         )
 
         # Publisher for cmd_vel
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
-        # Store latest target pose
-        self.latest_target_pose = None
+        # Store latest target
+        self.latest_target = None
 
-    def target_pose_callback(self, msg: PoseStamped):
+    def target_callback(self, msg: TrackedTarget):
         """Callback for target pose messages."""
-        self.latest_target_pose = msg
-        # TODO: Compute and publish cmd_vel based on target pose
+        self.latest_target = msg
+        # TODO: Compute and publish cmd_vel based on target info
 
     def compute_cmd_vel(self):
-        """Compute velocity command from latest target pose."""
+        """Compute velocity command from latest target."""
         # TODO:
-        # 1. Check if target_pose is recent (timestamp check)
-        # 2. Extract target position (x, y, z) from pose
-        # 3. Compute distance error (current - target_distance)
-        # 4. Compute angular error (angle to target)
+        # 1. Check if target is recent and target_visible is True
+        # 2. Extract target position (x, y) from message
+        # 3. Compute error from image center (for angular control)
+        # 4. Compute distance estimate from confidence/bbox size (for linear control)
         # 5. Apply proportional control with gains
         # 6. Clamp to max speeds
         # 7. Apply deadband
