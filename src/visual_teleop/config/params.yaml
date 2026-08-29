@@ -27,7 +27,6 @@ perception_node:
 
     # Output
     publish_annotated_image: true      # Publish /perception/annotated image
-    publish_rate: 30.0                 # Hz (legacy)
     publish_rate_hz: 30.0              # Hz
 
 # --- Controller Node Parameters ---
@@ -50,4 +49,4 @@ controller_node:
     enable_safety_stop: true           # Stop robot if no target detected
 
     # Output
-    publish_rate: 30.0                 # Hz
+    publish_rate_hz: 30.0              # Hz

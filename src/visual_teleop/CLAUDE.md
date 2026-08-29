@@ -11,8 +11,9 @@ this into /cmd_vel to drive a simulated TurtleBot3 in Gazebo.
 - Python 3.12, rclpy
 - Perception deps: ultralytics (YOLO), OpenCV, supervision (ByteTrack)
 - Sim: TurtleBot3 Gazebo packages (turtlebot3_gazebo)
-- Webcam confirmed working natively in WSL2 via /dev/video0 (no usbipd-win
-  needed — OpenCV's GStreamer backend handles it directly)
+- Webcam accessed via usbipd-win USB passthrough to WSL2; opened with OpenCV
+  V4L2 backend using MJPG format (YUYV produces corrupted frames; GStreamer
+  backend not used)
 
 ## Package layout
 See docs/ARCHITECTURE.md for the node graph and docs/TOPICS.md for message
