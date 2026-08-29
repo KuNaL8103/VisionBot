@@ -9,6 +9,9 @@ perception_node:
     camera_width: 640                  # Capture width
     camera_height: 480                 # Capture height
     camera_fps: 30                     # Capture FPS
+    camera_backend: "v4l2"             # Backend: v4l2 (required for webcam access in WSL2)
+    camera_fourcc: "MJPG"              # FourCC format: MJPG (YUYV produces corrupted frames in this env)
+    camera_warmup_frames: 10           # Frames to discard for auto-exposure/white-balance settle
 
     # YOLO settings
     yolo_model: "yolov8n.pt"           # YOLO model file (downloaded auto)

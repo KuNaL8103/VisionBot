@@ -28,7 +28,7 @@ contracts. Do not change topic names/types without updating both.
 
 ## Current status
 - **visual_teleop_msgs/TrackedTarget**: exists, builds, and is visible via `ros2 interface show`
-- **perception_node**: opens real webcam via cv2.VideoCapture, runs Ultralytics YOLOv8 (yolov8n.pt) to detect `target_class` (default "person"), publishes TrackedTarget with normalized bbox center of highest-confidence detection above `confidence_threshold`. If no detection, publishes `target_visible=false` and holds last known x/y. Debug mode via `show_debug_window` parameter opens OpenCV window with bounding box visualization. YOLO integrated; ByteTrack NOT yet integrated.
+- **perception_node**: opens real webcam via cv2.VideoCapture (V4L2 backend, MJPG format), runs Ultralytics YOLOv8 (yolov8n.pt) to detect `target_class` (default "person"), publishes TrackedTarget with normalized bbox center of highest-confidence detection above `confidence_threshold`. If no detection, publishes `target_visible=false` and holds last known x/y. Debug mode via `show_debug_window` parameter opens OpenCV window with bounding box visualization. **YOLO detection CONFIRMED working end-to-end on real webcam** — bounding box, confidence score, and target_visible=true/false all verified visually with person in frame.
 - **controller_node**: boilerplate only — declares parameters and subscribes to /target/pose, but does not yet compute or publish /cmd_vel.
 - **Tests**: perception_node has 5 passing unit tests (parameter loading, publish logic with mocked camera); controller_node has 1 placeholder test.
 

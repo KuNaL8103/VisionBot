@@ -2,6 +2,33 @@
 
 ## Webcam Issues
 
+### Solid green/corrupted frames in both cv2.imshow AND cv2.imwrite
+
+**Symptom**: Camera opens successfully (`cap.isOpened() == True`, `ret == True`, correct frame shape), but:
+- `cv2.imshow` shows solid green window (or solid color with thin correct strip at top)
+- `cv2.imwrite` saves PNG files that are ALSO solid green when opened in image viewer
+- Frame statistics show low unique color count, most pixels identical
+
+**False lead (ruled out)**: Assumed it was a Qt/GTK/WSLg display bug with `cv2.imshow`. **Ruled out** because `cv2.imwrite` bypasses all GUI code entirely (no Qt, no imshow, no window system) and produces identical corruption. If only `imshow` were broken, `imwrite` would save correct frames.
+
+**Root cause**: OpenCV was forcing `CAP_PROP_FOURCC` to YUYV (the camera's default raw format), but this specific webcam (ACER HD User Facing via usbipd-win/WSL2) streams **MJPG-compressed frames by default**. When OpenCV requests YUYV but the camera delivers MJPG bytes, OpenCV misinterprets the JPEG bitstream as raw YUYV pixels, producing the solid-green corruption pattern.
+
+**Evidence**:
+- `v4l2-ctl --list-formats-ext` showed MJPG listed as format [0] (first/highest priority) at 640x480@30fps
+- Forcing `camera_fourcc: "MJPG"` in params.yaml fixed it immediately
+- With MJPG: unique colors jumped from ~1,700 (corrupted) to ~11,000+ (real image), frame mean ~140 vs ~52, std ~53 vs ~75
+
+**Fix**: In `config/params.yaml`, set:
+```yaml
+camera_fourcc: "MJPG"   # Force MJPG decoding instead of default YUYV
+camera_backend: "v4l2"  # Explicit V4L2 backend (required for WSL2 webcam access)
+camera_warmup_frames: 10  # Discard frames for auto-exposure/white-balance settle
+```
+
+**Verification**: After fix, `cv2.imwrite` PNGs show real video content, `cv2.imshow` debug window shows live feed with YOLO bounding boxes, and `target_visible` toggles correctly with person detection confidence scores.
+
+---
+
 ### Camera not found /dev/video0
 ```bash
 # Check if camera exists
@@ -85,6 +112,27 @@ ls install/visual_teleop/share/visual_teleop/config/params.yaml
 ros2 param list /perception_node
 ros2 param get /perception_node camera_index
 ```
+
+### `ros2 run` does NOT load config/params.yaml automatically
+
+**Issue**: Running `ros2 run visual_teleop perception_node` starts the node but **does not load** `config/params.yaml`. Parameters fall back to `declare_parameter` defaults in the code, not the YAML values. This caused significant confusion during debugging when camera settings appeared ignored.
+
+**Why**: `ros2 run` only loads parameters from the command line (`-p key:=value`). The YAML file is loaded by `ros2 launch` via the `parameters:` field in the launch file, or explicitly with `--params-file`.
+
+**Correct ways to run with params.yaml**:
+
+```bash
+# Option 1: Use ros2 launch (loads params.yaml via launch file)
+ros2 launch visual_teleop perception.launch.py
+
+# Option 2: Pass params file explicitly to ros2 run
+ros2 run visual_teleop perception_node --ros-args --params-file install/visual_teleop/share/visual_teleop/config/params.yaml
+
+# Option 3: Override individual params on command line
+ros2 run visual_teleop perception_node --ros-args -p camera_fourcc:=MJPG -p camera_backend:=v4l2
+```
+
+**During development**: Always use `ros2 launch` or `--params-file` when testing parameter changes. The launch file `perception.launch.py` already includes the params file.
 
 ### Topic not publishing
 ```bash
