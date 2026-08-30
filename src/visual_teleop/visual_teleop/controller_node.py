@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Controller Node - Boilerplate
+Controller Node
 
 Subscribes to /target/pose (visual_teleop_msgs/TrackedTarget), computes
 velocity commands using a simple proportional controller, publishes /cmd_vel
@@ -23,9 +23,13 @@ class ControllerNode(Node):
         self.declare_parameter('linear_gain', 0.5)
         self.declare_parameter('angular_gain', 1.0)
         self.declare_parameter('max_linear_speed', 0.22)
-        self.declare_parameter('max_angular_speed', 2.84)
+        self.declare_parameter('max_angular_speed', 1.82)
         self.declare_parameter('target_distance', 1.0)  # desired distance from target (meters)
         self.declare_parameter('deadband', 0.1)  # distance deadband (meters)
+        self.declare_parameter('dead_zone_px', 0.05)  # dead zone in normalized x (0-1)
+        self.declare_parameter('lost_target_timeout', 1.0)  # seconds
+        self.declare_parameter('enable_safety_stop', True)
+        self.declare_parameter('publish_rate_hz', 30.0)
 
         # Get parameter values
         self.linear_gain = self.get_parameter('linear_gain').get_parameter_value().double_value
@@ -34,6 +38,10 @@ class ControllerNode(Node):
         self.max_angular_speed = self.get_parameter('max_angular_speed').get_parameter_value().double_value
         self.target_distance = self.get_parameter('target_distance').get_parameter_value().double_value
         self.deadband = self.get_parameter('deadband').get_parameter_value().double_value
+        self.dead_zone_px = self.get_parameter('dead_zone_px').get_parameter_value().double_value
+        self.lost_target_timeout = self.get_parameter('lost_target_timeout').get_parameter_value().double_value
+        self.enable_safety_stop = self.get_parameter('enable_safety_stop').get_parameter_value().bool_value
+        self.publish_rate_hz = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
 
         self.get_logger().info(f'Controller node initialized')
         self.get_logger().info(f'  linear_gain: {self.linear_gain}')
@@ -42,6 +50,10 @@ class ControllerNode(Node):
         self.get_logger().info(f'  max_angular_speed: {self.max_angular_speed}')
         self.get_logger().info(f'  target_distance: {self.target_distance}')
         self.get_logger().info(f'  deadband: {self.deadband}')
+        self.get_logger().info(f'  dead_zone_px: {self.dead_zone_px}')
+        self.get_logger().info(f'  lost_target_timeout: {self.lost_target_timeout}')
+        self.get_logger().info(f'  enable_safety_stop: {self.enable_safety_stop}')
+        self.get_logger().info(f'  publish_rate_hz: {self.publish_rate_hz}')
 
         # Subscriber to target pose
         self.target_sub = self.create_subscription(
@@ -54,29 +66,86 @@ class ControllerNode(Node):
         # Publisher for cmd_vel
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
-        # Store latest target
+        # Store latest target and timestamp
         self.latest_target = None
+        self.last_target_time = None
+
+        # Timer to publish cmd_vel at configured rate
+        timer_period = 1.0 / self.publish_rate_hz
+        self.timer = self.create_timer(timer_period, self.timer_callback)
 
     def target_callback(self, msg: TrackedTarget):
         """Callback for target pose messages."""
         self.latest_target = msg
-        # TODO: Compute and publish cmd_vel based on target info
+        self.last_target_time = self.get_clock().now()
 
-    def compute_cmd_vel(self):
+    def timer_callback(self):
+        """Periodic callback to compute and publish cmd_vel."""
+        twist = self.compute_cmd_vel()
+        self.cmd_vel_pub.publish(twist)
+
+    def compute_cmd_vel(self) -> Twist:
         """Compute velocity command from latest target."""
-        # TODO:
-        # 1. Check if target is recent and target_visible is True
-        # 2. Extract target position (x, y) from message
-        # 3. Compute error from image center (for angular control)
-        # 4. Compute distance estimate from confidence/bbox size (for linear control)
-        # 5. Apply proportional control with gains
-        # 6. Clamp to max speeds
-        # 7. Apply deadband
-        # 8. Publish Twist message
-        pass
+        twist = Twist()
+
+        # Check if we have a recent target
+        if self.latest_target is None:
+            if self.enable_safety_stop:
+                self.get_logger().debug('No target received yet, publishing zero velocity')
+            return twist
+
+        # Check if target is visible
+        if not self.latest_target.target_visible:
+            if self.enable_safety_stop:
+                self.get_logger().debug('Target not visible, publishing zero velocity')
+            return twist
+
+        # Check if target is recent (safety timeout)
+        if self.last_target_time is not None:
+            elapsed = (self.get_clock().now() - self.last_target_time).nanoseconds / 1e9
+            if elapsed > self.lost_target_timeout:
+                if self.enable_safety_stop:
+                    self.get_logger().debug(f'Target timeout ({elapsed:.2f}s), publishing zero velocity')
+                return twist
+
+        # Extract target position (normalized 0-1)
+        target_x = self.latest_target.x
+        target_y = self.latest_target.y
+
+        # Compute horizontal error from image center (0.5)
+        error_x = target_x - 0.5
+
+        # Angular velocity: proportional to horizontal error
+        # error_x = target_x - 0.5: negative when target is left, positive when right
+        # We want to turn toward the target: left target -> turn right (negative angular)
+        # right target -> turn left (positive angular)
+        if abs(error_x) < self.dead_zone_px:
+            angular_vel = 0.0
+        else:
+            angular_vel = error_x * self.angular_gain
+            # Clamp to max angular speed
+            angular_vel = max(-self.max_angular_speed, min(self.max_angular_speed, angular_vel))
+
+        # Linear velocity: proportional to distance error (using confidence as proxy for distance)
+        # Higher confidence = closer = smaller bbox = further away in normalized coords
+        # We'll use a simple approach: if target is roughly centered, move forward
+        # Only move forward when error is small (target is in front)
+        if abs(error_x) < 0.3:  # reasonable forward-facing range
+            linear_vel = self.linear_gain
+            # Clamp to max linear speed
+            linear_vel = max(0.0, min(self.max_linear_speed, linear_vel))
+        else:
+            linear_vel = 0.0
+
+        twist.linear.x = linear_vel
+        twist.angular.z = angular_vel
+
+        return twist
 
     def destroy_node(self):
-        # TODO: Publish zero velocity on shutdown
+        # Publish zero velocity on shutdown
+        zero_twist = Twist()
+        self.cmd_vel_pub.publish(zero_twist)
         super().destroy_node()
 
 
