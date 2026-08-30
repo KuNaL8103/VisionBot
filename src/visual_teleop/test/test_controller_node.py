@@ -62,33 +62,37 @@ class TestControllerNode(unittest.TestCase):
                            msg=f"Expected positive linear.x, got {twist.linear.x}")
         self.assertLessEqual(twist.linear.x, self.node.max_linear_speed)
 
-    def test_far_left_produces_negative_angular(self):
-        """Target far left (x=0.1) should produce negative angular velocity (turn right)."""
+    def test_far_left_produces_positive_angular(self):
+        """Target far left (x=0.1) should produce positive angular velocity (turn LEFT/CCW)."""
         target = self._create_target(x=0.1, y=0.5)
         self.node.target_callback(target)
         twist = self.node.compute_cmd_vel()
 
-        # Angular velocity should be negative (turn right to center target)
-        self.assertLess(twist.angular.z, 0.0,
-                        msg=f"Expected negative angular.z for left target, got {twist.angular.z}")
+        # Angular velocity should be positive (turn LEFT/CCW to center target on left)
+        # ROS convention: angular.z > 0 = CCW = turn LEFT
+        # Target on LEFT side of image (x < 0.5) -> robot must turn LEFT -> angular.z > 0
+        self.assertGreater(twist.angular.z, 0.0,
+                           msg=f"Expected positive angular.z for left target, got {twist.angular.z}")
         # Magnitude should be clamped to max_angular_speed
-        self.assertGreaterEqual(twist.angular.z, -self.node.max_angular_speed)
+        self.assertLessEqual(twist.angular.z, self.node.max_angular_speed)
 
         # Linear velocity should be zero (target too far left, not forward-facing)
         self.assertEqual(twist.linear.x, 0.0,
                          msg=f"Expected zero linear.x for far-left target, got {twist.linear.x}")
 
-    def test_far_right_produces_positive_angular(self):
-        """Target far right (x=0.9) should produce positive angular velocity (turn left)."""
+    def test_far_right_produces_negative_angular(self):
+        """Target far right (x=0.9) should produce negative angular velocity (turn RIGHT/CW)."""
         target = self._create_target(x=0.9, y=0.5)
         self.node.target_callback(target)
         twist = self.node.compute_cmd_vel()
 
-        # Angular velocity should be positive (turn left to center target)
-        self.assertGreater(twist.angular.z, 0.0,
-                           msg=f"Expected positive angular.z for right target, got {twist.angular.z}")
+        # Angular velocity should be negative (turn RIGHT/CW to center target on right)
+        # ROS convention: angular.z < 0 = CW = turn RIGHT
+        # Target on RIGHT side of image (x > 0.5) -> robot must turn RIGHT -> angular.z < 0
+        self.assertLess(twist.angular.z, 0.0,
+                        msg=f"Expected negative angular.z for right target, got {twist.angular.z}")
         # Magnitude should be clamped to max_angular_speed
-        self.assertLessEqual(twist.angular.z, self.node.max_angular_speed)
+        self.assertGreaterEqual(twist.angular.z, -self.node.max_angular_speed)
 
         # Linear velocity should be zero (target too far right, not forward-facing)
         self.assertEqual(twist.linear.x, 0.0,
@@ -158,8 +162,8 @@ class TestControllerNode(unittest.TestCase):
 
         # Should have positive linear velocity (moving forward)
         self.assertGreater(twist.linear.x, 0.0)
-        # Should have negative angular velocity (turning right)
-        self.assertLess(twist.angular.z, 0.0)
+        # Should have positive angular velocity (turning LEFT/CCW toward target on left)
+        self.assertGreater(twist.angular.z, 0.0)
 
     def test_target_slightly_right_still_moves_forward(self):
         """Target slightly right (within forward-facing range) should still move forward."""
@@ -169,8 +173,8 @@ class TestControllerNode(unittest.TestCase):
 
         # Should have positive linear velocity (moving forward)
         self.assertGreater(twist.linear.x, 0.0)
-        # Should have positive angular velocity (turning left)
-        self.assertGreater(twist.angular.z, 0.0)
+        # Should have negative angular velocity (turning RIGHT/CW toward target on right)
+        self.assertLess(twist.angular.z, 0.0)
 
 
 if __name__ == '__main__':

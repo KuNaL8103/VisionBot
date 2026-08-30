@@ -117,12 +117,14 @@ class ControllerNode(Node):
 
         # Angular velocity: proportional to horizontal error
         # error_x = target_x - 0.5: negative when target is left, positive when right
-        # We want to turn toward the target: left target -> turn right (negative angular)
-        # right target -> turn left (positive angular)
+        # ROS convention: angular.z > 0 = CCW (turn LEFT), angular.z < 0 = CW (turn RIGHT)
+        # Target on LEFT (x < 0.5) -> robot must turn LEFT -> angular.z > 0
+        # Target on RIGHT (x > 0.5) -> robot must turn RIGHT -> angular.z < 0
+        # Therefore: angular_vel = -error_x * angular_gain
         if abs(error_x) < self.dead_zone_px:
             angular_vel = 0.0
         else:
-            angular_vel = error_x * self.angular_gain
+            angular_vel = -error_x * self.angular_gain
             # Clamp to max angular speed
             angular_vel = max(-self.max_angular_speed, min(self.max_angular_speed, angular_vel))
 
