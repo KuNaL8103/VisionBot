@@ -229,6 +229,7 @@ class PerceptionNode(Node):
                 self._draw_debug_frame(frame, x1, y1, x2, y2, best_confidence, self.target_class, track_id=track_id)
         else:
             self._publish_target_visible_false(frame)
+            return
 
         self.target_pub.publish(msg)
 

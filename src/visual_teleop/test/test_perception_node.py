@@ -180,6 +180,43 @@ class TestPerceptionNode(unittest.TestCase):
 
         node.destroy_node()
 
+    def test_no_detection_publishes_single_zero_visible_msg(self):
+        """Test that when tracker returns no detections, exactly ONE message is published
+        with target_visible=False and x/y at last known position (not double-published)."""
+        # Change tracker mock to return empty detections
+        mock_detections = MagicMock()
+        mock_detections.__len__ = lambda self: 0  # No detections
+        self.mock_tracker.update.return_value = mock_detections
+
+        node = PerceptionNode()
+
+        # Capture published messages
+        published_messages = []
+
+        def capture_publish(msg):
+            published_messages.append(msg)
+        node.target_pub.publish = capture_publish
+
+        # Call timer callback
+        node.timer_callback()
+
+        # Verify exactly ONE message was published (not double-published)
+        self.assertEqual(len(published_messages), 1,
+                         msg=f"Expected exactly 1 publish, got {len(published_messages)}")
+
+        msg = published_messages[0]
+        self.assertIsInstance(msg, TrackedTarget)
+
+        # Should have target_visible=False
+        self.assertFalse(msg.target_visible, "target_visible should be False when no detection")
+        # Should hold last known position (initialized to 0.5, 0.5)
+        self.assertEqual(msg.x, 0.5, "x should be last known position (0.5)")
+        self.assertEqual(msg.y, 0.5, "y should be last known position (0.5)")
+        self.assertEqual(msg.confidence, 0.0, "confidence should be 0.0 when no detection")
+        self.assertEqual(msg.track_id, 0, "track_id should be 0 when no detection")
+
+        node.destroy_node()
+
 
 class TestPerceptionNodeIntegration(unittest.TestCase):
     """Integration-style tests using launch_testing (optional)."""
