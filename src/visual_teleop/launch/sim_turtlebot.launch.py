@@ -1,32 +1,27 @@
 #!/usr/bin/env python3
 """
-Simulated TurtleBot3 Launch File - Placeholder
+Simulated TurtleBot3 Launch File
 
-Launches Gazebo with TurtleBot3 simulation.
+Launches Gazebo with TurtleBot3 Burger model in the empty world.
 """
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
+from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    # TODO: Get turtlebot3_gazebo package share directory
-    # turtlebot3_gazebo_share = FindPackageShare('turtlebot3_gazebo')
+    turtlebot3_gazebo_share = get_package_share_directory('turtlebot3_gazebo')
+
+    # Set TURTLEBOT3_MODEL to burger (required by spawn_turtlebot3.launch.py)
+    set_turtlebot3_model = SetEnvironmentVariable('TURTLEBOT3_MODEL', 'burger')
 
     return LaunchDescription([
-        DeclareLaunchArgument(
-            'model',
-            default_value='waffle',
-            description='TurtleBot3 model type [burger, waffle, waffle_pi]'
-        ),
-        DeclareLaunchArgument(
-            'world',
-            default_value='empty',
-            description='Gazebo world file'
-        ),
+        set_turtlebot3_model,
         DeclareLaunchArgument(
             'x_pose',
             default_value='0.0',
@@ -37,17 +32,21 @@ def generate_launch_description():
             default_value='0.0',
             description='Initial y position'
         ),
+        DeclareLaunchArgument(
+            'use_sim_time',
+            default_value='true',
+            description='Use simulation time'
+        ),
 
-        # TODO: Include turtlebot3_gazebo launch file
-        # IncludeLaunchDescription(
-        #     PythonLaunchDescriptionSource([
-        #         PathJoinSubstitution([turtlebot3_gazebo_share, 'launch', 'turtlebot3_world.launch.py'])
-        #     ]),
-        #     launch_arguments={
-        #         'model': LaunchConfiguration('model'),
-        #         'world': LaunchConfiguration('world'),
-        #         'x_pose': LaunchConfiguration('x_pose'),
-        #         'y_pose': LaunchConfiguration('y_pose'),
-        #     }.items()
-        # ),
+        # Include the empty_world launch from turtlebot3_gazebo
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                os.path.join(turtlebot3_gazebo_share, 'launch', 'empty_world.launch.py')
+            ]),
+            launch_arguments={
+                'x_pose': LaunchConfiguration('x_pose'),
+                'y_pose': LaunchConfiguration('y_pose'),
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+            }.items()
+        ),
     ])
