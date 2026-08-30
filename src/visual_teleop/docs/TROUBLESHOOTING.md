@@ -29,6 +29,23 @@ camera_warmup_frames: 10  # Discard frames for auto-exposure/white-balance settl
 
 ---
 
+### ByteTrack ID resets after full occlusion
+
+**Symptom**: `track_id` in `/target/pose` changes to a new number after the target person fully leaves the frame (no bounding box at all, `target_visible: false`) and then re-enters. During continuous tracking with partial occlusion (person still partially visible, bounding box present but partly obscured), `track_id` stays the same.
+
+**Cause**: The `supervision.ByteTrack` implementation used here performs **motion-prediction + IoU matching only** — it has **no visual appearance-based re-identification**. When the target fully leaves the frame:
+1. Track enters "lost" state
+2. After `max_time_lost` frames (default 30), track is purged
+3. When person re-enters, it's treated as a new detection → new `track_id`
+
+Even before `max_time_lost`, if the predicted position drifts past the `minimum_matching_threshold` (IoU 0.8), the new detection won't match the old track.
+
+**Accepted limitation**: This project's controller only needs `x`, `y`, and `target_visible` to function — it does **not** depend on persistent identity across full occlusions. Adding appearance-based ReID (e.g., OSNet, DeepSORT) would add significant complexity and latency for no controller benefit.
+
+**Workaround (if ID persistence is needed later)**: Increase `max_time_lost` in params.yaml, or integrate a ReID model (supervision supports `ByteTrack + ReID` via custom extension).
+
+---
+
 ### Camera not found /dev/video0
 ```bash
 # Check if camera exists

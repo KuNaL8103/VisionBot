@@ -21,9 +21,10 @@ perception_node:
     device: "cpu"                      # Inference device: "cpu" or "cuda"
 
     # ByteTrack settings
-    tracking_max_age: 30               # Max frames to keep lost track
-    tracking_min_hits: 3               # Min hits to confirm track
-    tracking_iou_threshold: 0.3        # IoU threshold for track association
+    track_activation_threshold: 0.25   # Confidence threshold for activating new tracks
+    minimum_matching_threshold: 0.8    # IoU threshold for matching detections to tracks
+    max_time_lost: 30                  # Max frames to keep lost track alive
+    minimum_consecutive_frames: 1      # Min consecutive frames to confirm a track
 
     # Output
     publish_annotated_image: true      # Publish /perception/annotated image

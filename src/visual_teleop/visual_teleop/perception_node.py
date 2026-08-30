@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """
-Perception Node - YOLO Detection
+Perception Node - YOLO Detection + ByteTrack
 
 Opens webcam using OpenCV VideoCapture, runs YOLOv8 detection on each frame,
-publishes TrackedTarget with normalized bbox center of highest-confidence
-detection for the configured target_class.
+uses ByteTrack to maintain stable track IDs across frames, publishes
+TrackedTarget with normalized bbox center of highest-confidence detection
+for the configured target_class.
 """
 
 import rclpy
 from rclpy.node import Node
 from visual_teleop_msgs.msg import TrackedTarget
 import cv2
+import numpy as np
 from ultralytics import YOLO
+from visual_teleop.utils.tracker_wrapper import TrackerWrapper
 
 
 class PerceptionNode(Node):
@@ -26,7 +29,7 @@ class PerceptionNode(Node):
         self.declare_parameter('camera_height', 480)
         self.declare_parameter('camera_fps', 30)
         self.declare_parameter('camera_backend', 'v4l2')  # v4l2, any, gstreamer, ffmpeg
-        self.declare_parameter('camera_fourcc', 'YUYV')   # YUYV, MJPG
+        self.declare_parameter('camera_fourcc', 'MJPG')   # MJPG (default — YUYV causes corrupted frames on this hardware, see TROUBLESHOOTING.md)
         self.declare_parameter('camera_warmup_frames', 10)  # Frames to discard for auto-exposure settle
         self.declare_parameter('publish_rate_hz', 30.0)
         self.declare_parameter('yolo_model', 'yolov8n.pt')
@@ -35,6 +38,11 @@ class PerceptionNode(Node):
         self.declare_parameter('iou_threshold', 0.45)
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('show_debug_window', False)
+        # ByteTrack parameters
+        self.declare_parameter('track_activation_threshold', 0.25)
+        self.declare_parameter('minimum_matching_threshold', 0.8)
+        self.declare_parameter('max_time_lost', 30)
+        self.declare_parameter('minimum_consecutive_frames', 1)
 
         # Get parameter values
         self.camera_index = self.get_parameter('camera_index').get_parameter_value().integer_value
@@ -51,6 +59,11 @@ class PerceptionNode(Node):
         self.iou_threshold = self.get_parameter('iou_threshold').get_parameter_value().double_value
         self.device = self.get_parameter('device').get_parameter_value().string_value
         self.show_debug_window = self.get_parameter('show_debug_window').get_parameter_value().bool_value
+        # ByteTrack parameters
+        self.track_activation_threshold = self.get_parameter('track_activation_threshold').get_parameter_value().double_value
+        self.minimum_matching_threshold = self.get_parameter('minimum_matching_threshold').get_parameter_value().double_value
+        self.max_time_lost = self.get_parameter('max_time_lost').get_parameter_value().integer_value
+        self.minimum_consecutive_frames = self.get_parameter('minimum_consecutive_frames').get_parameter_value().integer_value
 
         self.get_logger().info(f'Perception node initialized')
         self.get_logger().info(f'  camera_index: {self.camera_index}')
@@ -67,6 +80,10 @@ class PerceptionNode(Node):
         self.get_logger().info(f'  iou_threshold: {self.iou_threshold}')
         self.get_logger().info(f'  device: {self.device}')
         self.get_logger().info(f'  show_debug_window: {self.show_debug_window}')
+        self.get_logger().info(f'  track_activation_threshold: {self.track_activation_threshold}')
+        self.get_logger().info(f'  minimum_matching_threshold: {self.minimum_matching_threshold}')
+        self.get_logger().info(f'  max_time_lost: {self.max_time_lost}')
+        self.get_logger().info(f'  minimum_consecutive_frames: {self.minimum_consecutive_frames}')
 
         # Load YOLO model
         self.get_logger().info(f'Loading YOLO model: {self.yolo_model_path}')
@@ -86,6 +103,15 @@ class PerceptionNode(Node):
             self.get_logger().warn(f'Target class "{self.target_class}" not found in model classes: {list(self.class_names.values())}')
         else:
             self.get_logger().info(f'Target class "{self.target_class}" has index {self.target_class_idx}')
+
+        # Initialize ByteTrack tracker
+        self.tracker = TrackerWrapper(
+            track_activation_threshold=self.track_activation_threshold,
+            minimum_matching_threshold=self.minimum_matching_threshold,
+            max_time_lost=self.max_time_lost,
+            minimum_consecutive_frames=self.minimum_consecutive_frames
+        )
+        self.get_logger().info('ByteTrack tracker initialized')
 
         # Open webcam with specified backend
         backend_map = {
@@ -130,7 +156,7 @@ class PerceptionNode(Node):
         self.timer = self.create_timer(1.0 / self.publish_rate_hz, self.timer_callback)
 
     def timer_callback(self):
-        """Timer callback: read frame, run YOLO detection, publish TrackedTarget."""
+        """Timer callback: read frame, run YOLO detection, update ByteTrack, publish TrackedTarget."""
         # Read frame
         ret, frame = self.cap.read()
         if not ret:
@@ -143,9 +169,10 @@ class PerceptionNode(Node):
         # Run YOLO inference
         results = self.model(frame, verbose=False, conf=self.confidence_threshold, iou=self.iou_threshold, device=self.device)
 
-        # Process detections
-        best_detection = None
-        best_confidence = 0.0
+        # Collect all target class detections
+        boxes_list = []
+        confidences_list = []
+        class_ids_list = []
 
         for result in results:
             boxes = result.boxes
@@ -157,15 +184,32 @@ class PerceptionNode(Node):
                 # Filter by target class
                 if self.target_class_idx is not None and cls_idx != self.target_class_idx:
                     continue
-                if conf > best_confidence:
-                    best_confidence = conf
-                    best_detection = box
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                boxes_list.append([x1, y1, x2, y2])
+                confidences_list.append(conf)
+                class_ids_list.append(cls_idx)
+
+        # Update ByteTrack tracker
+        if boxes_list:
+            boxes_array = np.array(boxes_list, dtype=np.float32)
+            confidences_array = np.array(confidences_list, dtype=np.float32)
+            class_ids_array = np.array(class_ids_list, dtype=np.int32)
+        else:
+            boxes_array = np.empty((0, 4), dtype=np.float32)
+            confidences_array = np.empty(0, dtype=np.float32)
+            class_ids_array = np.empty(0, dtype=np.int32)
+
+        tracked_detections = self.tracker.update(boxes_array, confidences_array, class_ids_array)
 
         # Prepare and publish message
         msg = TrackedTarget()
-        if best_detection is not None:
-            # Get bbox coordinates (xyxy format: x1, y1, x2, y2)
-            x1, y1, x2, y2 = best_detection.xyxy[0].tolist()
+        if len(tracked_detections) > 0:
+            # Select best track (highest confidence)
+            best_idx = np.argmax(tracked_detections.confidence)
+            x1, y1, x2, y2 = tracked_detections.xyxy[best_idx]
+            best_confidence = float(tracked_detections.confidence[best_idx])
+            track_id = int(tracked_detections.tracker_id[best_idx]) if tracked_detections.tracker_id is not None else 0
+
             # Compute center in normalized coordinates (0.0-1.0, origin top-left)
             center_x = (x1 + x2) / 2.0 / frame_width
             center_y = (y1 + y2) / 2.0 / frame_height
@@ -174,7 +218,7 @@ class PerceptionNode(Node):
             msg.y = float(center_y)
             msg.confidence = best_confidence
             msg.target_visible = True
-            msg.track_id = 0  # No ByteTrack yet
+            msg.track_id = track_id
 
             # Update last known position
             self.last_x = msg.x
@@ -182,7 +226,7 @@ class PerceptionNode(Node):
 
             # Debug window
             if self.show_debug_window:
-                self._draw_debug_frame(frame, x1, y1, x2, y2, best_confidence, self.target_class)
+                self._draw_debug_frame(frame, x1, y1, x2, y2, best_confidence, self.target_class, track_id=track_id)
         else:
             self._publish_target_visible_false(frame)
 
@@ -201,14 +245,14 @@ class PerceptionNode(Node):
         if self.show_debug_window and frame is not None:
             self._draw_debug_frame(frame, 0, 0, 0, 0, 0.0, self.target_class, no_detection=True)
 
-    def _draw_debug_frame(self, frame, x1, y1, x2, y2, conf, class_name, no_detection=False):
+    def _draw_debug_frame(self, frame, x1, y1, x2, y2, conf, class_name, no_detection=False, track_id=0):
         """Draw bounding box and info on frame for debug visualization."""
         debug_frame = frame.copy()
         if not no_detection and x2 > x1 and y2 > y1:
             # Draw bounding box
             cv2.rectangle(debug_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-            # Draw label
-            label = f'{class_name}: {conf:.2f}'
+            # Draw label with track_id
+            label = f'{class_name} ID:{track_id}: {conf:.2f}'
             cv2.putText(debug_frame, label, (int(x1), int(y1) - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             # Draw center point
