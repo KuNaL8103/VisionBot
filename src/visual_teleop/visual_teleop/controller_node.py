@@ -4,13 +4,13 @@ Controller Node
 
 Subscribes to /target/pose (visual_teleop_msgs/TrackedTarget), computes
 velocity commands using a simple proportional controller, publishes /cmd_vel
-for TurtleBot3.
+for TurtleBot3 (Gazebo expects geometry_msgs/TwistStamped).
 """
 
 import rclpy
 from rclpy.node import Node
 from visual_teleop_msgs.msg import TrackedTarget
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, TwistStamped
 
 
 class ControllerNode(Node):
@@ -63,8 +63,8 @@ class ControllerNode(Node):
             10
         )
 
-        # Publisher for cmd_vel
-        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        # Publisher for cmd_vel (Gazebo bridge expects TwistStamped)
+        self.cmd_vel_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
 
         # Store latest target and timestamp
         self.latest_target = None
@@ -81,24 +81,27 @@ class ControllerNode(Node):
 
     def timer_callback(self):
         """Periodic callback to compute and publish cmd_vel."""
-        twist = self.compute_cmd_vel()
-        self.cmd_vel_pub.publish(twist)
+        twist_stamped = self.compute_cmd_vel()
+        self.cmd_vel_pub.publish(twist_stamped)
 
-    def compute_cmd_vel(self) -> Twist:
+    def compute_cmd_vel(self) -> TwistStamped:
         """Compute velocity command from latest target."""
+        twist_stamped = TwistStamped()
+        twist_stamped.header.stamp = self.get_clock().now().to_msg()
+        twist_stamped.header.frame_id = 'base_link'
         twist = Twist()
 
         # Check if we have a recent target
         if self.latest_target is None:
             if self.enable_safety_stop:
                 self.get_logger().debug('No target received yet, publishing zero velocity')
-            return twist
+            return twist_stamped
 
         # Check if target is visible
         if not self.latest_target.target_visible:
             if self.enable_safety_stop:
                 self.get_logger().debug('Target not visible, publishing zero velocity')
-            return twist
+            return twist_stamped
 
         # Check if target is recent (safety timeout)
         if self.last_target_time is not None:
@@ -106,7 +109,7 @@ class ControllerNode(Node):
             if elapsed > self.lost_target_timeout:
                 if self.enable_safety_stop:
                     self.get_logger().debug(f'Target timeout ({elapsed:.2f}s), publishing zero velocity')
-                return twist
+                return twist_stamped
 
         # Extract target position (normalized 0-1)
         target_x = self.latest_target.x
@@ -142,11 +145,14 @@ class ControllerNode(Node):
         twist.linear.x = linear_vel
         twist.angular.z = angular_vel
 
-        return twist
+        twist_stamped.twist = twist
+        return twist_stamped
 
     def destroy_node(self):
         # Publish zero velocity on shutdown
-        zero_twist = Twist()
+        zero_twist = TwistStamped()
+        zero_twist.header.stamp = self.get_clock().now().to_msg()
+        zero_twist.header.frame_id = 'base_link'
         self.cmd_vel_pub.publish(zero_twist)
         super().destroy_node()
 
