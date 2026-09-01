@@ -180,7 +180,7 @@ class PerceptionNode(Node):
         ret, frame = self.cap.read()
         if not ret:
             self.get_logger().warn('Failed to read frame from camera', throttle_duration_sec=5.0)
-            self._publish_target_visible_false(frame_stamp)
+            self._publish_target_visible_false(stamp=frame_stamp)
             return
 
         frame_height, frame_width = frame.shape[:2]

@@ -31,7 +31,6 @@ class ControllerNode(Node):
         self.declare_parameter('target_distance', 1.0)  # desired distance from target (meters)
         self.declare_parameter('deadband', 0.1)  # distance deadband (meters)
         self.declare_parameter('dead_zone_px', 0.05)  # dead zone in normalized x (0-1)
-        self.declare_parameter('lost_target_timeout', 1.0)  # seconds
         self.declare_parameter('target_lost_timeout_sec', 1.0)  # seconds - watchdog timeout for zero Twist
         self.declare_parameter('enable_safety_stop', True)
         self.declare_parameter('publish_rate_hz', 30.0)
@@ -44,7 +43,6 @@ class ControllerNode(Node):
         self.target_distance = self.get_parameter('target_distance').get_parameter_value().double_value
         self.deadband = self.get_parameter('deadband').get_parameter_value().double_value
         self.dead_zone_px = self.get_parameter('dead_zone_px').get_parameter_value().double_value
-        self.lost_target_timeout = self.get_parameter('lost_target_timeout').get_parameter_value().double_value
         self.target_lost_timeout_sec = self.get_parameter('target_lost_timeout_sec').get_parameter_value().double_value
         self.enable_safety_stop = self.get_parameter('enable_safety_stop').get_parameter_value().bool_value
         self.publish_rate_hz = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
@@ -57,7 +55,6 @@ class ControllerNode(Node):
         self.get_logger().info(f'  target_distance: {self.target_distance}')
         self.get_logger().info(f'  deadband: {self.deadband}')
         self.get_logger().info(f'  dead_zone_px: {self.dead_zone_px}')
-        self.get_logger().info(f'  lost_target_timeout: {self.lost_target_timeout}')
         self.get_logger().info(f'  target_lost_timeout_sec: {self.target_lost_timeout_sec}')
         self.get_logger().info(f'  enable_safety_stop: {self.enable_safety_stop}')
         self.get_logger().info(f'  publish_rate_hz: {self.publish_rate_hz}')
@@ -140,7 +137,7 @@ class ControllerNode(Node):
         # Check if target is recent (safety timeout)
         if self.last_target_time is not None:
             elapsed = (now - self.last_target_time).nanoseconds / 1e9
-            if elapsed > self.lost_target_timeout:
+            if elapsed > self.target_lost_timeout_sec:
                 if self.enable_safety_stop:
                     self.get_logger().debug(f'Target timeout ({elapsed:.2f}s), publishing zero velocity')
                 return twist_stamped

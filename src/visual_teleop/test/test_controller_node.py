@@ -11,6 +11,7 @@ import rclpy
 from rclpy.node import Node
 from visual_teleop_msgs.msg import TrackedTarget
 from geometry_msgs.msg import Twist, TwistStamped
+from builtin_interfaces.msg import Time
 
 from visual_teleop.controller_node import ControllerNode
 
@@ -175,6 +176,69 @@ class TestControllerNode(unittest.TestCase):
         self.assertGreater(twist_stamped.twist.linear.x, 0.0)
         # Should have negative angular velocity (turning RIGHT/CW toward target on right)
         self.assertLess(twist_stamped.twist.angular.z, 0.0)
+
+    def test_watchdog_publishes_zero_twist_when_target_lost_no_new_messages(self):
+        """Watchdog should publish zero Twist if target_visible=false for > target_lost_timeout_sec,
+        even if no new messages arrive."""
+        # First, send a visible target
+        target = self._create_target(x=0.5, y=0.5, target_visible=True)
+        self.node.target_callback(target)
+
+        # Capture published messages from watchdog
+        published_messages = []
+        def capture_publish(msg):
+            published_messages.append(msg)
+        original_publish = self.node.cmd_vel_pub.publish
+        self.node.cmd_vel_pub.publish = capture_publish
+
+        # Now send target_visible=False
+        target = self._create_target(x=0.5, y=0.5, target_visible=False)
+        self.node.target_callback(target)
+
+        # Wait a bit to simulate time passing (we can't easily mock time in ROS,
+        # so we'll directly manipulate the last_target_time to simulate elapsed time)
+        # The watchdog checks: elapsed = (now - last_target_time) > target_lost_timeout_sec
+        # We'll set last_target_time to be older than target_lost_timeout_sec
+        from rclpy.time import Time
+        old_time = self.node.get_clock().now() - rclpy.duration.Duration(seconds=self.node.target_lost_timeout_sec + 0.5)
+        self.node.last_target_time = old_time
+
+        # Call watchdog_callback directly (simulates 10Hz timer firing)
+        self.node.watchdog_callback()
+
+        # Verify zero Twist was published by watchdog
+        self.assertEqual(len(published_messages), 1,
+                         msg=f"Expected watchdog to publish 1 zero Twist, got {len(published_messages)}")
+        msg = published_messages[0]
+        self.assertEqual(msg.twist.linear.x, 0.0, "Watchdog should publish zero linear.x")
+        self.assertEqual(msg.twist.angular.z, 0.0, "Watchdog should publish zero angular.z")
+
+        # Restore
+        self.node.cmd_vel_pub.publish = original_publish
+
+    def test_latency_logging_with_valid_stamp(self):
+        """Test that compute_cmd_vel computes sane latency when msg.stamp is set to N ms in the past."""
+        # Create a target with stamp from 50ms ago
+        target = self._create_target(x=0.5, y=0.5, target_visible=True)
+
+        # Set stamp to 50ms in the past (0.05 seconds = 50,000,000 nanoseconds)
+        now = self.node.get_clock().now()
+        past_time = rclpy.time.Time(seconds=now.seconds_nanoseconds()[0], nanoseconds=now.seconds_nanoseconds()[1] - 50_000_000)
+        target.stamp = past_time.to_msg()
+
+        self.node.target_callback(target)
+        twist_stamped = self.node.compute_cmd_vel()
+
+        # The function should not crash (no exception)
+        # Latency is logged internally; we can't easily capture the log output in unittest
+        # but we can verify the computation doesn't produce garbage by checking twist is valid
+        self.assertIsNotNone(twist_stamped)
+        self.assertIsInstance(twist_stamped, TwistStamped)
+
+        # Verify twist values are reasonable for centered target
+        self.assertAlmostEqual(twist_stamped.twist.angular.z, 0.0, places=5)
+        self.assertGreater(twist_stamped.twist.linear.x, 0.0)
+        self.assertLessEqual(twist_stamped.twist.linear.x, self.node.max_linear_speed)
 
 
 if __name__ == '__main__':

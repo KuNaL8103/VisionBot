@@ -45,9 +45,8 @@ This package implements a visual teleoperation system where a laptop webcam trac
   3. Apply proportional control for linear/angular velocity
   4. Clamp to `max_linear_speed` / `max_angular_speed`
   5. Apply dead zone (`dead_zone_px`)
-  6. Safety (subscription callback): publish zero velocity if `target_visible=false` for > `lost_target_timeout`
-  7. **Watchdog timer (10 Hz)**: publishes zero Twist if `target_visible` has been false for > `target_lost_timeout_sec` (default 1.0s), even if no new messages arrive
-  8. **Latency logging**: computes and logs time from frame capture (`msg.stamp`) to Twist publish (~every 2s)
+  6. Safety (subscription callback + watchdog): publish zero velocity if `target_visible=false` for > `target_lost_timeout_sec` (default 1.0s). The watchdog timer (10 Hz) ensures zero Twist is published even if no new messages arrive.
+  7. **Latency logging**: computes and logs time from frame capture (`msg.stamp`) to Twist publish (~every 2s)
 - **Output**: `/cmd_vel` (geometry_msgs/TwistStamped)
 
 ## Data Flow Timing
@@ -99,8 +98,7 @@ All parameters in `config/params.yaml`, loaded via `declare_parameter`.
 | target_distance | double | 1.0 | Desired follow distance (meters) |
 | deadband | double | 0.1 | Distance deadband (meters) |
 | dead_zone_px | double | 0.05 | Dead zone in normalized x (0-1) for angular control |
-| lost_target_timeout | double | 1.0 | Seconds before stopping if target lost (callback check) |
-| target_lost_timeout_sec | double | 1.0 | Watchdog timeout: zero Twist if target_visible=false this long |
+| target_lost_timeout_sec | double | 1.0 | Seconds before stopping if target lost (used by both callback check and watchdog timer) |
 | enable_safety_stop | bool | true | Stop robot if no target detected |
 | publish_rate_hz | double | 30.0 | Hz |
 

@@ -7,6 +7,7 @@ Tests parameter loading and publish logic with mocked camera.
 
 import unittest
 from unittest.mock import patch, MagicMock, PropertyMock
+from collections import deque
 import rclpy
 import numpy as np
 from visual_teleop_msgs.msg import TrackedTarget
@@ -214,6 +215,82 @@ class TestPerceptionNode(unittest.TestCase):
         self.assertEqual(msg.y, 0.5, "y should be last known position (0.5)")
         self.assertEqual(msg.confidence, 0.0, "confidence should be 0.0 when no detection")
         self.assertEqual(msg.track_id, 0, "track_id should be 0 when no detection")
+
+        node.destroy_node()
+
+    def test_smoothing_moving_average(self):
+        """Test that published x/y is moving average of last N raw positions, not raw value itself."""
+        # Create node with smoothing_window_size=3 (will be loaded from params.yaml default 5,
+        # but we need to test with a specific window size)
+        # We'll mock the parameter loading by creating a node with custom params
+        node = PerceptionNode()
+
+        # Override smoothing window to 3 for this test
+        node.smoothing_window_size = 3
+        node.smoothing_buffer_x = deque(maxlen=3)
+        node.smoothing_buffer_y = deque(maxlen=3)
+
+        # Capture published messages
+        published_messages = []
+
+        def capture_publish(msg):
+            published_messages.append(msg)
+        node.target_pub.publish = capture_publish
+
+        # Mock different bbox positions for sequential calls
+        # Frame 1: bbox at [100, 100, 300, 300] -> center (200, 200) -> norm (0.3125, 0.4167)
+        # Frame 2: bbox at [120, 120, 320, 320] -> center (220, 220) -> norm (0.34375, 0.45833)
+        # Frame 3: bbox at [140, 140, 340, 340] -> center (240, 240) -> norm (0.375, 0.5)
+
+        bboxes = [
+            [100, 100, 300, 300],  # center (200, 200)
+            [120, 120, 320, 320],  # center (220, 220)
+            [140, 140, 340, 340],  # center (240, 240)
+        ]
+
+        expected_centers = [
+            (200/640, 200/480),    # 0.3125, 0.4167
+            (220/640, 220/480),    # 0.34375, 0.45833
+            (240/640, 240/480),    # 0.375, 0.5
+        ]
+
+        for i, (bbox, (exp_x, exp_y)) in enumerate(zip(bboxes, expected_centers)):
+            # Update mock tracker to return this bbox
+            mock_detections = MagicMock()
+            mock_detections.confidence = np.array([0.8], dtype=np.float32)
+            mock_detections.xyxy = np.array([bbox], dtype=np.float32)
+            mock_detections.tracker_id = np.array([1], dtype=np.int32)
+            mock_detections.__len__ = lambda self: 1
+            self.mock_tracker.update.return_value = mock_detections
+
+            # Call timer callback
+            node.timer_callback()
+
+            # Get the published message
+            msg = published_messages[-1]
+
+            # For first frame, smoothing buffer has 1 element -> average = raw
+            if i == 0:
+                self.assertAlmostEqual(msg.x, exp_x, places=4,
+                    msg=f"Frame {i+1}: x should equal raw (buffer has 1 element)")
+                self.assertAlmostEqual(msg.y, exp_y, places=4,
+                    msg=f"Frame {i+1}: y should equal raw (buffer has 1 element)")
+            # For second frame, buffer has 2 elements -> average of first 2
+            elif i == 1:
+                avg_x = (expected_centers[0][0] + expected_centers[1][0]) / 2
+                avg_y = (expected_centers[0][1] + expected_centers[1][1]) / 2
+                self.assertAlmostEqual(msg.x, avg_x, places=4,
+                    msg=f"Frame {i+1}: x should be average of first 2 frames")
+                self.assertAlmostEqual(msg.y, avg_y, places=4,
+                    msg=f"Frame {i+1}: y should be average of first 2 frames")
+            # For third frame, buffer has 3 elements -> average of all 3
+            elif i == 2:
+                avg_x = sum(c[0] for c in expected_centers) / 3
+                avg_y = sum(c[1] for c in expected_centers) / 3
+                self.assertAlmostEqual(msg.x, avg_x, places=4,
+                    msg=f"Frame {i+1}: x should be average of 3 frames")
+                self.assertAlmostEqual(msg.y, avg_y, places=4,
+                    msg=f"Frame {i+1}: y should be average of 3 frames")
 
         node.destroy_node()
 

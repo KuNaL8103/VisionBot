@@ -50,8 +50,7 @@ controller_node:
     dead_zone_px: 0.05                 # Dead zone in normalized x (0-1) for angular control
 
     # Safety
-    lost_target_timeout: 1.0           # Seconds before stopping if target lost (subscription callback check)
-    target_lost_timeout_sec: 1.0       # Watchdog timer timeout: zero Twist if target_visible=false for this long
+    target_lost_timeout_sec: 1.0       # Seconds before stopping if target lost (used by both callback and watchdog)
     enable_safety_stop: true           # Stop robot if no target detected
 
     # Output
