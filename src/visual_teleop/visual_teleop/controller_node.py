@@ -73,6 +73,7 @@ class ControllerNode(Node):
         # Store latest target and timestamp
         self.latest_target = None
         self.last_target_time = None
+        self.last_latency_sec = None  # Stores last computed frame-to-cmd_vel latency (seconds)
 
         # Timer to publish cmd_vel at configured rate
         timer_period = 1.0 / self.publish_rate_hz
@@ -183,11 +184,13 @@ class ControllerNode(Node):
             try:
                 frame_time = rclpy.time.Time.from_msg(self.latest_target.stamp)
                 latency_ns = (now - frame_time).nanoseconds
-                latency_ms = latency_ns / 1e6
+                latency_sec = latency_ns / 1e9
+                self.last_latency_sec = latency_sec
+                latency_ms = latency_sec * 1000
                 self.get_logger().info(f'Latency: {latency_ms:.1f}ms (frame->cmd_vel)', throttle_duration_sec=2.0)
             except Exception:
                 # Ignore timestamp conversion errors
-                pass
+                self.last_latency_sec = None
 
         return twist_stamped
 

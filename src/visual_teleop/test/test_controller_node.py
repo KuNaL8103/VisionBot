@@ -221,17 +221,15 @@ class TestControllerNode(unittest.TestCase):
         # Create a target with stamp from 50ms ago
         target = self._create_target(x=0.5, y=0.5, target_visible=True)
 
-        # Set stamp to 50ms in the past (0.05 seconds = 50,000,000 nanoseconds)
+        # Set stamp to 50ms in the past using total nanoseconds to avoid underflow
         now = self.node.get_clock().now()
-        past_time = rclpy.time.Time(seconds=now.seconds_nanoseconds()[0], nanoseconds=now.seconds_nanoseconds()[1] - 50_000_000)
+        past_time = rclpy.time.Time(nanoseconds=now.nanoseconds - 50_000_000)
         target.stamp = past_time.to_msg()
 
         self.node.target_callback(target)
         twist_stamped = self.node.compute_cmd_vel()
 
         # The function should not crash (no exception)
-        # Latency is logged internally; we can't easily capture the log output in unittest
-        # but we can verify the computation doesn't produce garbage by checking twist is valid
         self.assertIsNotNone(twist_stamped)
         self.assertIsInstance(twist_stamped, TwistStamped)
 
@@ -239,6 +237,12 @@ class TestControllerNode(unittest.TestCase):
         self.assertAlmostEqual(twist_stamped.twist.angular.z, 0.0, places=5)
         self.assertGreater(twist_stamped.twist.linear.x, 0.0)
         self.assertLessEqual(twist_stamped.twist.linear.x, self.node.max_linear_speed)
+
+        # Verify computed latency is exposed and close to expected 50ms (0.05s)
+        # Allow some tolerance for execution time (±20ms)
+        self.assertIsNotNone(self.node.last_latency_sec, "last_latency_sec should be set")
+        self.assertGreater(self.node.last_latency_sec, 0.02, "Latency should be positive and > 20ms")
+        self.assertLess(self.node.last_latency_sec, 0.1, "Latency should be < 100ms (close to 50ms)")
 
 
 if __name__ == '__main__':
