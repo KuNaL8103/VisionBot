@@ -6,15 +6,20 @@ Opens webcam using OpenCV VideoCapture, runs YOLOv8 detection on each frame,
 uses ByteTrack to maintain stable track IDs across frames, publishes
 TrackedTarget with normalized bbox center of highest-confidence detection
 for the configured target_class.
+
+Includes moving-average filter (parameterizable window size) to smooth
+published x/y coordinates while keeping target_visible raw per-frame.
 """
 
 import rclpy
 from rclpy.node import Node
 from visual_teleop_msgs.msg import TrackedTarget
+from builtin_interfaces.msg import Time
 import cv2
 import numpy as np
 from ultralytics import YOLO
 from visual_teleop.utils.tracker_wrapper import TrackerWrapper
+from collections import deque
 
 
 class PerceptionNode(Node):
@@ -44,6 +49,9 @@ class PerceptionNode(Node):
         self.declare_parameter('max_time_lost', 30)
         self.declare_parameter('minimum_consecutive_frames', 1)
 
+        # Smoothing filter (moving average) parameters
+        self.declare_parameter('smoothing_window_size', 5)  # Number of frames for moving average, 0=disabled
+
         # Get parameter values
         self.camera_index = self.get_parameter('camera_index').get_parameter_value().integer_value
         self.camera_width = self.get_parameter('camera_width').get_parameter_value().integer_value
@@ -65,6 +73,13 @@ class PerceptionNode(Node):
         self.max_time_lost = self.get_parameter('max_time_lost').get_parameter_value().integer_value
         self.minimum_consecutive_frames = self.get_parameter('minimum_consecutive_frames').get_parameter_value().integer_value
 
+        # Smoothing filter parameters
+        self.smoothing_window_size = self.get_parameter('smoothing_window_size').get_parameter_value().integer_value
+
+        # Initialize smoothing buffers
+        self.smoothing_buffer_x = deque(maxlen=self.smoothing_window_size) if self.smoothing_window_size > 0 else None
+        self.smoothing_buffer_y = deque(maxlen=self.smoothing_window_size) if self.smoothing_window_size > 0 else None
+
         self.get_logger().info(f'Perception node initialized')
         self.get_logger().info(f'  camera_index: {self.camera_index}')
         self.get_logger().info(f'  camera_width: {self.camera_width}')
@@ -84,6 +99,7 @@ class PerceptionNode(Node):
         self.get_logger().info(f'  minimum_matching_threshold: {self.minimum_matching_threshold}')
         self.get_logger().info(f'  max_time_lost: {self.max_time_lost}')
         self.get_logger().info(f'  minimum_consecutive_frames: {self.minimum_consecutive_frames}')
+        self.get_logger().info(f'  smoothing_window_size: {self.smoothing_window_size}')
 
         # Load YOLO model
         self.get_logger().info(f'Loading YOLO model: {self.yolo_model_path}')
@@ -157,11 +173,14 @@ class PerceptionNode(Node):
 
     def timer_callback(self):
         """Timer callback: read frame, run YOLO detection, update ByteTrack, publish TrackedTarget."""
+        # Capture timestamp at frame read for latency measurement
+        frame_stamp = self.get_clock().now().to_msg()
+
         # Read frame
         ret, frame = self.cap.read()
         if not ret:
             self.get_logger().warn('Failed to read frame from camera', throttle_duration_sec=5.0)
-            self._publish_target_visible_false()
+            self._publish_target_visible_false(frame_stamp)
             return
 
         frame_height, frame_width = frame.shape[:2]
@@ -203,6 +222,7 @@ class PerceptionNode(Node):
 
         # Prepare and publish message
         msg = TrackedTarget()
+        msg.stamp = frame_stamp  # Timestamp for latency measurement
         if len(tracked_detections) > 0:
             # Select best track (highest confidence)
             best_idx = np.argmax(tracked_detections.confidence)
@@ -211,16 +231,28 @@ class PerceptionNode(Node):
             track_id = int(tracked_detections.tracker_id[best_idx]) if tracked_detections.tracker_id is not None else 0
 
             # Compute center in normalized coordinates (0.0-1.0, origin top-left)
-            center_x = (x1 + x2) / 2.0 / frame_width
-            center_y = (y1 + y2) / 2.0 / frame_height
+            raw_center_x = (x1 + x2) / 2.0 / frame_width
+            raw_center_y = (y1 + y2) / 2.0 / frame_height
 
-            msg.x = float(center_x)
-            msg.y = float(center_y)
+            # Apply moving average filter to x/y if enabled
+            if self.smoothing_buffer_x is not None and self.smoothing_buffer_y is not None:
+                self.smoothing_buffer_x.append(raw_center_x)
+                self.smoothing_buffer_y.append(raw_center_y)
+                # Compute moving average
+                smoothed_x = sum(self.smoothing_buffer_x) / len(self.smoothing_buffer_x)
+                smoothed_y = sum(self.smoothing_buffer_y) / len(self.smoothing_buffer_y)
+                msg.x = float(smoothed_x)
+                msg.y = float(smoothed_y)
+            else:
+                # No smoothing - use raw values
+                msg.x = float(raw_center_x)
+                msg.y = float(raw_center_y)
+
             msg.confidence = best_confidence
             msg.target_visible = True
             msg.track_id = track_id
 
-            # Update last known position
+            # Update last known position (use raw for hold, smoothed for output)
             self.last_x = msg.x
             self.last_y = msg.y
 
@@ -228,12 +260,12 @@ class PerceptionNode(Node):
             if self.show_debug_window:
                 self._draw_debug_frame(frame, x1, y1, x2, y2, best_confidence, self.target_class, track_id=track_id)
         else:
-            self._publish_target_visible_false(frame)
+            self._publish_target_visible_false(frame, frame_stamp)
             return
 
         self.target_pub.publish(msg)
 
-    def _publish_target_visible_false(self, frame=None):
+    def _publish_target_visible_false(self, frame=None, stamp=None):
         """Publish TrackedTarget with target_visible=false, holding last known position."""
         msg = TrackedTarget()
         msg.x = self.last_x
@@ -241,6 +273,8 @@ class PerceptionNode(Node):
         msg.confidence = 0.0
         msg.target_visible = False
         msg.track_id = 0
+        if stamp is not None:
+            msg.stamp = stamp
         self.target_pub.publish(msg)
 
         if self.show_debug_window and frame is not None:

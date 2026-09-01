@@ -26,6 +26,9 @@ perception_node:
     max_time_lost: 30                  # Max frames to keep lost track alive
     minimum_consecutive_frames: 1      # Min consecutive frames to confirm a track
 
+    # Smoothing filter (moving average)
+    smoothing_window_size: 5           # Number of frames for moving average (default 5, 0=disabled)
+
     # Output
     publish_annotated_image: true      # Publish /perception/annotated image
     publish_rate_hz: 30.0              # Hz
@@ -47,7 +50,8 @@ controller_node:
     dead_zone_px: 0.05                 # Dead zone in normalized x (0-1) for angular control
 
     # Safety
-    lost_target_timeout: 1.0           # Seconds before stopping if target lost
+    lost_target_timeout: 1.0           # Seconds before stopping if target lost (subscription callback check)
+    target_lost_timeout_sec: 1.0       # Watchdog timer timeout: zero Twist if target_visible=false for this long
     enable_safety_stop: true           # Stop robot if no target detected
 
     # Output

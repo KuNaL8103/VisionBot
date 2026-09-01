@@ -5,12 +5,16 @@ Controller Node
 Subscribes to /target/pose (visual_teleop_msgs/TrackedTarget), computes
 velocity commands using a simple proportional controller, publishes /cmd_vel
 for TurtleBot3 (Gazebo expects geometry_msgs/TwistStamped).
+
+Includes watchdog timer to publish zero Twist when target lost for longer than
+target_lost_timeout_sec, and latency logging from frame timestamp.
 """
 
 import rclpy
 from rclpy.node import Node
 from visual_teleop_msgs.msg import TrackedTarget
 from geometry_msgs.msg import Twist, TwistStamped
+from builtin_interfaces.msg import Time
 
 
 class ControllerNode(Node):
@@ -28,6 +32,7 @@ class ControllerNode(Node):
         self.declare_parameter('deadband', 0.1)  # distance deadband (meters)
         self.declare_parameter('dead_zone_px', 0.05)  # dead zone in normalized x (0-1)
         self.declare_parameter('lost_target_timeout', 1.0)  # seconds
+        self.declare_parameter('target_lost_timeout_sec', 1.0)  # seconds - watchdog timeout for zero Twist
         self.declare_parameter('enable_safety_stop', True)
         self.declare_parameter('publish_rate_hz', 30.0)
 
@@ -40,6 +45,7 @@ class ControllerNode(Node):
         self.deadband = self.get_parameter('deadband').get_parameter_value().double_value
         self.dead_zone_px = self.get_parameter('dead_zone_px').get_parameter_value().double_value
         self.lost_target_timeout = self.get_parameter('lost_target_timeout').get_parameter_value().double_value
+        self.target_lost_timeout_sec = self.get_parameter('target_lost_timeout_sec').get_parameter_value().double_value
         self.enable_safety_stop = self.get_parameter('enable_safety_stop').get_parameter_value().bool_value
         self.publish_rate_hz = self.get_parameter('publish_rate_hz').get_parameter_value().double_value
 
@@ -52,6 +58,7 @@ class ControllerNode(Node):
         self.get_logger().info(f'  deadband: {self.deadband}')
         self.get_logger().info(f'  dead_zone_px: {self.dead_zone_px}')
         self.get_logger().info(f'  lost_target_timeout: {self.lost_target_timeout}')
+        self.get_logger().info(f'  target_lost_timeout_sec: {self.target_lost_timeout_sec}')
         self.get_logger().info(f'  enable_safety_stop: {self.enable_safety_stop}')
         self.get_logger().info(f'  publish_rate_hz: {self.publish_rate_hz}')
 
@@ -74,10 +81,36 @@ class ControllerNode(Node):
         timer_period = 1.0 / self.publish_rate_hz
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
+        # Watchdog timer: publishes zero Twist if target lost for longer than target_lost_timeout_sec
+        self.watchdog_timer = self.create_timer(0.1, self.watchdog_callback)  # 10 Hz check
+
     def target_callback(self, msg: TrackedTarget):
         """Callback for target pose messages."""
         self.latest_target = msg
         self.last_target_time = self.get_clock().now()
+
+    def watchdog_callback(self):
+        """Watchdog timer: publishes zero Twist if target lost for longer than target_lost_timeout_sec."""
+        if self.latest_target is None:
+            # No target ever received - publish zero (safety)
+            if self.enable_safety_stop:
+                self._publish_zero_twist()
+            return
+
+        # Check if target_visible has been false for longer than target_lost_timeout_sec
+        if not self.latest_target.target_visible:
+            elapsed = (self.get_clock().now() - self.last_target_time).nanoseconds / 1e9
+            if elapsed > self.target_lost_timeout_sec:
+                if self.enable_safety_stop:
+                    self.get_logger().debug(f'Watchdog: target lost for {elapsed:.2f}s (> {self.target_lost_timeout_sec}s), publishing zero Twist')
+                    self._publish_zero_twist()
+
+    def _publish_zero_twist(self):
+        """Publish zero velocity command."""
+        twist_stamped = TwistStamped()
+        twist_stamped.header.stamp = self.get_clock().now().to_msg()
+        twist_stamped.header.frame_id = 'base_link'
+        self.cmd_vel_pub.publish(twist_stamped)
 
     def timer_callback(self):
         """Periodic callback to compute and publish cmd_vel."""
@@ -86,8 +119,9 @@ class ControllerNode(Node):
 
     def compute_cmd_vel(self) -> TwistStamped:
         """Compute velocity command from latest target."""
+        now = self.get_clock().now()
         twist_stamped = TwistStamped()
-        twist_stamped.header.stamp = self.get_clock().now().to_msg()
+        twist_stamped.header.stamp = now.to_msg()
         twist_stamped.header.frame_id = 'base_link'
         twist = Twist()
 
@@ -105,7 +139,7 @@ class ControllerNode(Node):
 
         # Check if target is recent (safety timeout)
         if self.last_target_time is not None:
-            elapsed = (self.get_clock().now() - self.last_target_time).nanoseconds / 1e9
+            elapsed = (now - self.last_target_time).nanoseconds / 1e9
             if elapsed > self.lost_target_timeout:
                 if self.enable_safety_stop:
                     self.get_logger().debug(f'Target timeout ({elapsed:.2f}s), publishing zero velocity')
@@ -146,6 +180,18 @@ class ControllerNode(Node):
         twist.angular.z = angular_vel
 
         twist_stamped.twist = twist
+
+        # Latency logging: time from frame capture (msg.stamp) to Twist publish
+        if self.latest_target is not None and self.latest_target.stamp is not None:
+            try:
+                frame_time = rclpy.time.Time.from_msg(self.latest_target.stamp)
+                latency_ns = (now - frame_time).nanoseconds
+                latency_ms = latency_ns / 1e6
+                self.get_logger().info(f'Latency: {latency_ms:.1f}ms (frame->cmd_vel)', throttle_duration_sec=2.0)
+            except Exception:
+                # Ignore timestamp conversion errors
+                pass
+
         return twist_stamped
 
     def destroy_node(self):
