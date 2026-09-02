@@ -1,5 +1,5 @@
 # VisionBot — Webcam-Driven Visual Teleoperation
- 
+
 A ROS 2 Jazzy project that uses a laptop webcam as the **only sensor** to
 track a person and drive a simulated TurtleBot3 robot in Gazebo — no
 physical robot hardware required.
@@ -14,19 +14,21 @@ physical robot hardware required.
                                         /cmd_vel → TurtleBot3 (Gazebo)
 ```
  
+
 Move in front of the camera, and the simulated robot turns to follow you —
 in real time, entirely in simulation.
- 
+
 ---
- 
+
 ## Table of Contents
- 
+
 - [What This Is](#what-this-is)
 - [How It Works](#how-it-works)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
 - [Running the Full System](#running-the-full-system)
+- [Cleaning Up / Restarting](#cleaning-up--restarting)
 - [Configuration](#configuration)
 - [Message & Topic Reference](#message--topic-reference)
 - [Running Tests](#running-tests)
@@ -34,13 +36,13 @@ in real time, entirely in simulation.
 - [Known Limitations](#known-limitations)
 - [Possible Extensions](#possible-extensions)
 ---
- 
+
 ## What This Is
- 
+
 VisionBot is a visual teleoperation pipeline built entirely in software —
 your laptop's built-in or USB webcam is the only "sensor" needed. It
 demonstrates a full perception-to-control robotics loop:
- 
+
 1. **Perception**: A webcam feed is run through YOLOv8 to detect a person,
    and ByteTrack assigns a stable ID to that detection across frames.
 2. **Control**: A proportional controller converts the target's position in
@@ -52,9 +54,9 @@ skills: custom message design, node architecture, parameter management,
 launch file composition, and integrating a computer-vision pipeline with a
 robotics control loop and simulator — while working through the genuine
 environment quirks of running ROS 2 + Gazebo + a webcam inside WSL2.
- 
+
 ## How It Works
- 
+
 ### Node Graph
  
 ```
@@ -72,6 +74,7 @@ environment quirks of running ROS 2 + Gazebo + a webcam inside WSL2.
                                              └──────────────────┘
 ```
  
+
 - **`perception_node`** opens the webcam directly via `cv2.VideoCapture`
   (no separate camera driver node). It runs YOLOv8 (`yolov8n.pt`) to detect
   the target class (default: `person`), wraps detections with ByteTrack for
@@ -88,7 +91,7 @@ environment quirks of running ROS 2 + Gazebo + a webcam inside WSL2.
 - **Gazebo** runs the standard TurtleBot3 Burger model in an empty world,
   bridged to ROS 2 topics via `ros_gz_bridge`.
 ### Control Logic
- 
+
 - **Angular velocity**: `angular_vel = -error_x * angular_gain`, where
   `error_x = target.x - 0.5`. Per ROS convention (REP 103), positive
   `angular.z` is counter-clockwise (turn left). A target on the left side
@@ -133,8 +136,9 @@ ros2_ws/
             └── TrackedTarget.msg          # x, y, confidence, target_visible, track_id, stamp
 ```
  
+
 ## Prerequisites
- 
+
 - **OS**: Ubuntu 24.04 (tested on WSL2 under Windows 11, but should work
   the same on native Ubuntu)
 - **ROS 2 Jazzy**
@@ -143,24 +147,24 @@ ros2_ws/
   USB passthrough via `usbipd-win`; see [Troubleshooting](#troubleshooting).
 - **Gazebo** (Harmonic, ships with ROS 2 Jazzy) + TurtleBot3 packages
 ### Python Dependencies
- 
+
 ```bash
 pip install ultralytics opencv-python supervision --break-system-packages
 ```
- 
+
 - `ultralytics` — YOLOv8 object detection (auto-downloads `yolov8n.pt` on
   first run)
 - `opencv-python` — webcam capture and image processing
 - `supervision` — ByteTrack multi-object tracking wrapper
 ### ROS 2 / System Dependencies
- 
+
 ```bash
 sudo apt update
 sudo apt install ros-jazzy-turtlebot3 ros-jazzy-turtlebot3-gazebo
 ```
- 
+
 ## Setup
- 
+
 1. **Clone into a ROS 2 workspace:**
 ```bash
    mkdir -p ~/ros2_ws/src
@@ -170,7 +174,7 @@ sudo apt install ros-jazzy-turtlebot3 ros-jazzy-turtlebot3-gazebo
    *(Adjust folder naming if the repo doesn't already unpack into
    `visual_teleop` + `visual_teleop_msgs` — both packages should sit
    directly under `src/`.)*
- 
+
 2. **Install dependencies** (see [Prerequisites](#prerequisites) above).
 3. **Build the workspace:**
 ```bash
@@ -178,7 +182,7 @@ sudo apt install ros-jazzy-turtlebot3 ros-jazzy-turtlebot3-gazebo
    colcon build --packages-select visual_teleop_msgs visual_teleop
    source install/setup.bash
 ```
- 
+
 4. **If on WSL2, attach your webcam** (see
    [Troubleshooting](#troubleshooting) for the full usbipd-win flow):
 ```powershell
@@ -190,41 +194,48 @@ sudo apt install ros-jazzy-turtlebot3 ros-jazzy-turtlebot3-gazebo
 ```bash
    ls -la /dev/video*
 ```
- 
+
 5. **Set the TurtleBot3 model** (required every session, or add to your
    shell profile):
 ```bash
    export TURTLEBOT3_MODEL=burger
 ```
- 
+
+6. **Make the cleanup script executable** (one-time setup — see
+   [Cleaning Up / Restarting](#cleaning-up--restarting) for why this
+   exists):
+```bash
+   chmod +x ~/ros2_ws/clean_launch.sh
+```
+
 ## Running the Full System
- 
+
 The simplest way to run everything — Gazebo sim, perception, and
 controller — together:
- 
+
 ```bash
 export TURTLEBOT3_MODEL=burger
 source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
 ros2 launch visual_teleop full_system.launch.py
 ```
- 
+
 Wait for Gazebo to fully load (a few seconds), then stand in front of your
 webcam. Moving left/right should turn the simulated robot to follow you.
- 
+
 ### Running Components Individually (for debugging)
- 
+
 ```bash
 # Just the Gazebo sim
 ros2 launch visual_teleop sim_turtlebot.launch.py
- 
+
 # Just perception, with a debug window showing detections
 ros2 run visual_teleop perception_node --ros-args -p show_debug_window:=true
- 
+
 # Just the controller
 ros2 run visual_teleop controller_node
 ```
- 
+
 > **Note**: `ros2 run` does **not** automatically load `config/params.yaml`
 > — only `ros2 launch` does. When running a node standalone with `ros2 run`
 > for debugging, pass parameters explicitly:
@@ -232,18 +243,70 @@ ros2 run visual_teleop controller_node
 > ros2 run visual_teleop perception_node --ros-args --params-file \
 >   install/visual_teleop/share/visual_teleop/config/params.yaml
 > ```
- 
+
 ### Manually Driving the Robot (sanity check)
- 
+
 ```bash
 ros2 run turtlebot3_teleop teleop_keyboard
 ```
 (requires `TURTLEBOT3_MODEL=burger` set and the sim already running)
- 
+
+## Cleaning Up / Restarting
+
+Stopping `full_system.launch.py` with **`Ctrl+C` in the terminal that
+launched it** is the reliable way to shut everything down cleanly. Closing
+the Gazebo window directly, a crash, or killing the terminal itself can
+leave orphaned `gz sim`, `perception_node`, or `controller_node` processes
+running in the background — which then compete with the next launch for
+the webcam, `/cmd_vel`, and `/target/pose`, causing confusing, inconsistent
+behavior (e.g. the robot ignoring commands, or a blank/stuck Gazebo window).
+
+As a safety net, `clean_launch.sh` (at the workspace root) force-kills any
+leftover processes before you launch again:
+
+```bash
+#!/bin/bash
+echo "Cleaning up any leftover processes..."
+pkill -9 -f "gz sim" 2>/dev/null
+pkill -9 -f "ros_gz" 2>/dev/null
+pkill -9 -f "parameter_bridge" 2>/dev/null
+pkill -9 -f "robot_state_publisher" 2>/dev/null
+pkill -9 -f "perception_node" 2>/dev/null
+pkill -9 -f "controller_node" 2>/dev/null
+sleep 2
+echo "Done. Process list:"
+ps aux | grep -E "gz sim|ros_gz|perception_node|controller_node" | grep -v grep
+```
+
+Run it before every launch, especially after a crash or an ungraceful
+shutdown:
+
+```bash
+~/ros2_ws/clean_launch.sh
+```
+
+If the process-list output at the end is empty, you're clean. Then launch
+normally:
+
+```bash
+export TURTLEBOT3_MODEL=burger
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch visual_teleop full_system.launch.py
+```
+
+**Optional convenience:** add an alias so you don't need to type the full
+path every time:
+```bash
+echo 'alias clean_launch="~/ros2_ws/clean_launch.sh"' >> ~/.bashrc
+source ~/.bashrc
+# then just run: clean_launch
+```
+
 ## Configuration
- 
+
 All tunable parameters live in `config/params.yaml`. Highlights:
- 
+
 **Perception (`perception_node`)**
 | Parameter | Default | Description |
 |---|---|---|
@@ -253,7 +316,7 @@ All tunable parameters live in `config/params.yaml`. Highlights:
 | `confidence_threshold` | `0.5` | Minimum detection confidence |
 | `smoothing_window_size` | `5` | Moving-average window for x/y jitter reduction (0 = disabled) |
 | `show_debug_window` | `false` | Opens an OpenCV window with bounding boxes for visual debugging |
- 
+
 **Controller (`controller_node`)**
 | Parameter | Default | Description |
 |---|---|---|
@@ -261,16 +324,16 @@ All tunable parameters live in `config/params.yaml`. Highlights:
 | `max_linear_speed` / `max_angular_speed` | `0.22` / `1.82` | TurtleBot3 Burger's real speed limits |
 | `dead_zone_px` | `0.05` | Ignore small horizontal errors near center |
 | `target_lost_timeout_sec` | `1.0` | Stop the robot if target is lost for this long |
- 
+
 See `docs/ARCHITECTURE.md` for the complete parameter reference.
- 
+
 ## Message & Topic Reference
- 
+
 | Topic | Type | Publisher → Subscriber |
 |---|---|---|
 | `/target/pose` | `visual_teleop_msgs/TrackedTarget` | `perception_node` → `controller_node` |
 | `/cmd_vel` | `geometry_msgs/TwistStamped` | `controller_node` → TurtleBot3 (Gazebo) |
- 
+
 **`TrackedTarget.msg`**
 ```
 float32 x                          # normalized 0.0–1.0, target center, image left→right
@@ -281,30 +344,31 @@ int32 track_id                     # ByteTrack ID (resets after full occlusion �
 builtin_interfaces/Time stamp      # frame capture time, for latency measurement
 ```
  
+
 Full contract details (QoS, special values, coordinate conventions) are in
 `docs/TOPICS.md`.
- 
+
 ## Running Tests
- 
+
 All tests are unit tests with mocked hardware — **no camera or Gazebo
 required**:
- 
+
 ```bash
 cd ~/ros2_ws
 source install/setup.bash
 python3 -m pytest src/visual_teleop/test/ -v
 ```
- 
+
 Perception tests mock `cv2.VideoCapture`, YOLO, and ByteTrack. Controller
 tests use fabricated `TrackedTarget` messages to verify control-loop logic
 (sign conventions, clamping, dead zones, watchdog behavior, and latency
 computation) in isolation.
- 
+
 ## Troubleshooting
- 
+
 The most valuable lessons from building this project are captured in
 `docs/TROUBLESHOOTING.md`. Highlights:
- 
+
 - **Solid green / corrupted webcam frames**: caused by OpenCV defaulting to
   the `YUYV` pixel format while the camera actually streams `MJPG`. Fixed
   by explicitly forcing `camera_fourcc: "MJPG"`. If you see this, don't
@@ -320,18 +384,34 @@ The most valuable lessons from building this project are captured in
   publishing plain `Twist` will silently produce no robot motion.
 - **Slow/laggy Gazebo rendering under WSL2**: often caused by falling back
   to CPU software rendering (`llvmpipe`). Check with
-  `glxinfo | grep "OpenGL renderer"`; if it shows `llvmpipe`, force GPU
-  rendering via Mesa's D3D12 backend:
+  `glxinfo | grep "OpenGL renderer"` — if it shows `llvmpipe`, that's CPU
+  rendering. Forcing GPU rendering via Mesa's D3D12 backend helps:
 ```bash
   export GALLIUM_DRIVER=d3d12
-  export MESA_D3D12_DEFAULT_ADAPTER_NAME="<your GPU name>"
 ```
- 
+  On this project's hardware (RTX 4050 + AMD integrated GPU laptop), this
+  alone renders via the **AMD integrated GPU** and is stable. Additionally
+  forcing the discrete NVIDIA GPU with
+  `MESA_D3D12_DEFAULT_ADAPTER_NAME="NVIDIA GeForce RTX 4050 Laptop GPU"`
+  was tested and **reliably crashes Gazebo's GUI** on OpenGL context
+  creation (`glx: failed to create drisw screen` → `Aborted (core dumped)`)
+  — even though `glxinfo` reports the NVIDIA adapter as working fine. This
+  appears specific to Gazebo's Qt/QML rendering path, not a general
+  driver problem. **Do not set `MESA_D3D12_DEFAULT_ADAPTER_NAME` to the
+  NVIDIA GPU** — leave `GALLIUM_DRIVER=d3d12` set alone (defaults to the
+  AMD GPU) for stable, still GPU-accelerated rendering. If your own
+  hardware doesn't have this issue, forcing the discrete GPU may work
+  fine — test in a throwaway terminal (`export`, not `~/.bashrc`) before
+  committing to it.
+- **Orphaned processes after a crash or closing the Gazebo window**: see
+  [Cleaning Up / Restarting](#cleaning-up--restarting) — use
+  `clean_launch.sh` before relaunching.
+
 See `docs/TROUBLESHOOTING.md` for full detail and additional issues
 (ByteTrack ID behavior, build errors, etc).
- 
+
 ## Known Limitations
- 
+
 - **ByteTrack has no visual re-identification.** `track_id` stays stable
   through brief partial occlusion, but resets to a new ID after the target
   fully leaves the frame and reappears. This doesn't affect the follow
@@ -345,7 +425,7 @@ See `docs/TROUBLESHOOTING.md` for full detail and additional issues
 - **TurtleBot3 Burger's real-world top speed is genuinely slow**
   (0.22 m/s) — this is expected, not a performance bug.
 ## Possible Extensions
- 
+
 - **MoveIt arm variant**: reuse `/target/pose` to drive a robotic arm's
   end-effector instead of a mobile base (`arm_controller_node.py`,
   following a MoveIt demo config).
@@ -354,8 +434,7 @@ See `docs/TROUBLESHOOTING.md` for full detail and additional issues
 - **Physical hardware deployment** on a real TurtleBot3.
 - **Gesture-based control** (e.g., hand gestures instead of person-position
   tracking) using MediaPipe hand landmarks.
----
- 
+
 *Built as a ROS 2 + computer vision portfolio project — real webcam,
 real YOLO detection, real ByteTrack tracking, real proportional control,
 real Gazebo simulation.*
