@@ -45,3 +45,6 @@ src/py_pubsub/
 src/py_srvcli/
 src/examples/
 src/ros_tutorials/
+
+# Local Claude Code instructions
+**/CLAUDE.md
