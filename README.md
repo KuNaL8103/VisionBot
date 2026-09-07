@@ -105,37 +105,53 @@ environment quirks of running ROS 2 + Gazebo + a webcam inside WSL2.
   detects the target has been lost for longer than
   `target_lost_timeout_sec`.
 ## Project Structure
- 
+
+This repository **is** the colcon workspace's `src/` directory — clone it
+directly into `~/ros2_ws/src/` (see [Setup](#setup)). The two ROS 2 packages
+sit at the top level of the repo:
+
 ```
-ros2_ws/
-└── src/
-    ├── visual_teleop/                     # Main package
-    │   ├── CLAUDE.md                      # Living project-status doc
-    │   ├── package.xml
-    │   ├── setup.py / setup.cfg
-    │   ├── visual_teleop/
-    │   │   ├── perception_node.py         # Webcam → YOLO → ByteTrack → /target/pose
-    │   │   ├── controller_node.py         # /target/pose → /cmd_vel
-    │   │   └── utils/
-    │   │       └── tracker_wrapper.py     # ByteTrack wrapper (supervision lib)
-    │   ├── launch/
-    │   │   ├── perception.launch.py       # Perception node standalone
-    │   │   ├── sim_turtlebot.launch.py    # TurtleBot3 Gazebo sim standalone
-    │   │   └── full_system.launch.py      # Everything wired together
-    │   ├── config/
-    │   │   └── params.yaml                # All tunable parameters
-    │   ├── test/
-    │   │   ├── test_perception_node.py    # Mocked unit tests (no camera needed)
-    │   │   └── test_controller_node.py    # Mocked unit tests (no sim needed)
-    │   └── docs/
-    │       ├── ARCHITECTURE.md            # Node graph, data flow, parameters
-    │       ├── TOPICS.md                  # Message/topic contracts
-    │       └── TROUBLESHOOTING.md         # Environment issues & fixes
-    └── visual_teleop_msgs/                # Custom message package
-        └── msg/
-            └── TrackedTarget.msg          # x, y, confidence, target_visible, track_id, stamp
+VisionBot/                                # this repo, clone into ~/ros2_ws/src/
+├── .gitignore
+├── README.md                             # this file
+├── clean_launch.sh                       # process cleanup helper (see below)
+├── visual_teleop/                        # Main ROS 2 package
+│   ├── CLAUDE.md                         # Living project-status doc (not tracked)
+│   ├── LICENSE                           # Apache 2.0
+│   ├── package.xml
+│   ├── setup.py / setup.cfg
+│   ├── resource/visual_teleop            # ament index marker
+│   ├── visual_teleop/                    # Python module
+│   │   ├── __init__.py
+│   │   ├── perception_node.py            # Webcam → YOLO → ByteTrack → /target/pose
+│   │   ├── controller_node.py            # /target/pose → /cmd_vel
+│   │   └── utils/
+│   │       ├── __init__.py
+│   │       └── tracker_wrapper.py        # ByteTrack wrapper (supervision lib)
+│   ├── launch/
+│   │   ├── perception.launch.py          # Perception node standalone
+│   │   ├── sim_turtlebot.launch.py       # TurtleBot3 Gazebo sim standalone
+│   │   └── full_system.launch.py         # Everything wired together
+│   ├── config/
+│   │   └── params.yaml                   # All tunable parameters
+│   ├── test/
+│   │   ├── test_perception_node.py       # Mocked unit tests (no camera needed)
+│   │   └── test_controller_node.py       # Mocked unit tests (no sim needed)
+│   └── docs/
+│       ├── ARCHITECTURE.md               # Node graph, data flow, parameters
+│       ├── TOPICS.md                     # Message/topic contracts
+│       └── TROUBLESHOOTING.md            # Environment issues & fixes
+└── visual_teleop_msgs/                   # Custom message package
+    ├── CMakeLists.txt
+    ├── package.xml
+    └── msg/
+        └── TrackedTarget.msg             # x, y, confidence, target_visible, track_id, stamp
 ```
- 
+
+> **Why the packages are at the top level, not under `src/`**: This is the
+> standard colcon layout — `colcon build` expects to be run from the
+> workspace root (`~/ros2_ws/`) with the packages immediately inside
+> `src/`. The repo *is* the `src/` directory.
 
 ## Prerequisites
 
@@ -169,11 +185,11 @@ sudo apt install ros-jazzy-turtlebot3 ros-jazzy-turtlebot3-gazebo
 ```bash
    mkdir -p ~/ros2_ws/src
    cd ~/ros2_ws/src
-   git clone https://github.com/KuNaL8103/VisionBot.git
+   git clone https://github.com/KuNaL8103/VisionBot.git .
 ```
-   *(Adjust folder naming if the repo doesn't already unpack into
-   `visual_teleop` + `visual_teleop_msgs` — both packages should sit
-   directly under `src/`.)*
+   The trailing `.` clones the repo *into* the current directory
+   (`~/ros2_ws/src/`) instead of creating a `VisionBot/` subfolder. This
+   keeps the packages at the top level of `src/` as `colcon` expects.
 
 2. **Install dependencies** (see [Prerequisites](#prerequisites) above).
 3. **Build the workspace:**
@@ -205,7 +221,7 @@ sudo apt install ros-jazzy-turtlebot3 ros-jazzy-turtlebot3-gazebo
    [Cleaning Up / Restarting](#cleaning-up--restarting) for why this
    exists):
 ```bash
-   chmod +x ~/ros2_ws/clean_launch.sh
+   chmod +x ~/ros2_ws/src/clean_launch.sh
 ```
 
 ## Running the Full System
@@ -261,7 +277,7 @@ running in the background — which then compete with the next launch for
 the webcam, `/cmd_vel`, and `/target/pose`, causing confusing, inconsistent
 behavior (e.g. the robot ignoring commands, or a blank/stuck Gazebo window).
 
-As a safety net, `clean_launch.sh` (at the workspace root) force-kills any
+As a safety net, `clean_launch.sh` (in the repo root) force-kills any
 leftover processes before you launch again:
 
 ```bash
@@ -282,7 +298,7 @@ Run it before every launch, especially after a crash or an ungraceful
 shutdown:
 
 ```bash
-~/ros2_ws/clean_launch.sh
+~/ros2_ws/src/clean_launch.sh
 ```
 
 If the process-list output at the end is empty, you're clean. Then launch
@@ -298,44 +314,74 @@ ros2 launch visual_teleop full_system.launch.py
 **Optional convenience:** add an alias so you don't need to type the full
 path every time:
 ```bash
-echo 'alias clean_launch="~/ros2_ws/clean_launch.sh"' >> ~/.bashrc
+echo 'alias clean_launch="~/ros2_ws/src/clean_launch.sh"' >> ~/.bashrc
 source ~/.bashrc
 # then just run: clean_launch
 ```
 
 ## Configuration
 
-All tunable parameters live in `config/params.yaml`. Highlights:
+All tunable parameters live in [`config/params.yaml`](visual_teleop/config/params.yaml),
+loaded via `declare_parameter` in each node (no hardcoded values in source).
+The launch files pick it up automatically.
 
-**Perception (`perception_node`)**
+### Perception node (`perception_node`)
+
 | Parameter | Default | Description |
-|---|---|---|
-| `camera_index` | `0` | Video device index |
-| `camera_fourcc` | `"MJPG"` | Camera pixel format — **do not change to YUYV**, see Troubleshooting |
-| `target_class` | `"person"` | COCO class YOLO should track |
-| `confidence_threshold` | `0.5` | Minimum detection confidence |
-| `smoothing_window_size` | `5` | Moving-average window for x/y jitter reduction (0 = disabled) |
-| `show_debug_window` | `false` | Opens an OpenCV window with bounding boxes for visual debugging |
+| --- | --- | --- |
+| `camera_index` | `0` | Video device index (`/dev/videoX`) |
+| `camera_width` | `640` | Capture width in pixels |
+| `camera_height` | `480` | Capture height in pixels |
+| `camera_fps` | `30` | Capture FPS requested from the device |
+| `camera_backend` | `"v4l2"` | OpenCV backend — `v4l2` required for WSL2 webcam access |
+| `camera_fourcc` | `"MJPG"` | Pixel format — **do not change to YUYV**, see Troubleshooting |
+| `camera_warmup_frames` | `10` | Frames discarded at startup so auto-exposure/white-balance can settle |
+| `yolo_model` | `"yolov8n.pt"` | YOLO weights file (auto-downloaded on first run) |
+| `target_class` | `"person"` | COCO class to track |
+| `confidence_threshold` | `0.5` | Minimum detection confidence to publish |
+| `iou_threshold` | `0.45` | NMS IoU threshold |
+| `device` | `"cpu"` | Inference device: `"cpu"` or `"cuda"` |
+| `track_activation_threshold` | `0.25` | Confidence threshold for activating a new ByteTrack track |
+| `minimum_matching_threshold` | `0.8` | IoU threshold for matching detections to existing tracks |
+| `max_time_lost` | `30` | Frames a lost track is kept alive before being dropped |
+| `minimum_consecutive_frames` | `1` | Consecutive frames required to confirm a track |
+| `smoothing_window_size` | `5` | Moving-average window for published x/y (0 = disabled) |
+| `publish_annotated_image` | `true` | Publish `/perception/annotated` image |
+| `publish_rate_hz` | `30.0` | Publish rate |
 
-**Controller (`controller_node`)**
+> `perception_node` also accepts a boolean `show_debug_window` parameter
+> (Python default `false`) that opens an OpenCV window with bounding boxes
+> for visual debugging. It is **not** in `config/params.yaml` because it is
+> a debug-only switch — pass it on the command line:
+> `ros2 run visual_teleop perception_node --ros-args -p show_debug_window:=true`.
+
+### Controller node (`controller_node`)
+
 | Parameter | Default | Description |
-|---|---|---|
-| `linear_gain` / `angular_gain` | `0.5` / `1.0` | Proportional control gains |
-| `max_linear_speed` / `max_angular_speed` | `0.22` / `1.82` | TurtleBot3 Burger's real speed limits |
-| `dead_zone_px` | `0.05` | Ignore small horizontal errors near center |
-| `target_lost_timeout_sec` | `1.0` | Stop the robot if target is lost for this long |
+| --- | --- | --- |
+| `linear_gain` | `0.5` | Proportional gain for linear velocity |
+| `angular_gain` | `1.0` | Proportional gain for angular velocity |
+| `max_linear_speed` | `0.22` | m/s — TurtleBot3 Burger's real speed limit |
+| `max_angular_speed` | `1.82` | rad/s |
+| `target_distance` | `1.0` | Desired distance from target (meters) |
+| `deadband` | `0.1` | Distance deadband (meters) around `target_distance` |
+| `dead_zone_px` | `0.05` | Dead zone in normalized x (0–1) for angular control |
+| `target_lost_timeout_sec` | `1.0` | Seconds before stopping if target is lost (used by both the callback and the watchdog timer) |
+| `enable_safety_stop` | `true` | Stop the robot if no target is detected |
+| `publish_rate_hz` | `30.0` | Publish rate |
 
-See `docs/ARCHITECTURE.md` for the complete parameter reference.
+See [`docs/ARCHITECTURE.md`](visual_teleop/docs/ARCHITECTURE.md) for how the
+controller uses these parameters in the control loop.
 
 ## Message & Topic Reference
 
 | Topic | Type | Publisher → Subscriber |
-|---|---|---|
+| --- | --- | --- |
 | `/target/pose` | `visual_teleop_msgs/TrackedTarget` | `perception_node` → `controller_node` |
 | `/cmd_vel` | `geometry_msgs/TwistStamped` | `controller_node` → TurtleBot3 (Gazebo) |
 
 **`TrackedTarget.msg`**
-```
+```text
 float32 x                          # normalized 0.0–1.0, target center, image left→right
 float32 y                          # normalized 0.0–1.0, target center, image top→bottom
 float32 confidence                 # YOLO detection confidence
